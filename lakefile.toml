@@ -1,0 +1,10 @@
+name = "IntroEffects"
+version = "0.1.0"
+defaultTargets = ["introeffects"]
+
+[[lean_lib]]
+name = "IntroEffects"
+
+[[lean_exe]]
+name = "introeffects"
+root = "Main"
