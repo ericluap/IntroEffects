@@ -67,6 +67,8 @@ def evalSingleStep : Computation → Option Computation
 | .handle (.hdl h) c =>
   (evalSingleStep c).map (fun c' => .handle (.hdl h) c')
 | .join (.string s₁) (.string s₂) => some <| .ret (.string (s₁ ++ " " ++ s₂))
+| .fst (.pair v₁ _) => some <| .ret v₁
+| .snd (.pair _ v₂) => some <| .ret v₂
 | _ => none
 
 /--
@@ -131,25 +133,23 @@ theorem evalSingleStep_sound {c c' : Computation} :
           simp [evalSingleStep, hlookup]
           intro h; rw [←h]
           solve_by_elim
-      | handle | bind | ite | app =>
+      | handle | bind | ite | app | join | fst | snd =>
         simp [evalSingleStep]
         intro x eq1 eq2
         rw [←eq2]
         apply Step.handleInner
         apply evalSingleStep_sound
         assumption
-      | join =>
-        simp [evalSingleStep]
-        intro x h1 h2
-        have := evalSingleStep_sound h1
-        rw [←h2]
-        exact Step.handleInner h _ _ this
     | _ => simp [evalSingleStep]
   | join v1 v2 =>
     cases v1 <;> cases v2 <;> simp [evalSingleStep]
-    · intro h
-      rw [←h]
-      constructor
+    · intro h; rw [←h]; constructor
+  | fst v1 =>
+    cases v1 <;> simp [evalSingleStep]
+    · intro h; rw [←h]; constructor
+  | snd v2 =>
+    cases v2 <;> simp [evalSingleStep]
+    · intro h; rw [←h]; constructor
 
 /--
   If `c ⤳ c'`, then `evalSingleStep` reduces `c` to `c'`.
@@ -335,3 +335,17 @@ theorem eval_iff_stepStar :
 
 macro "#evalLang " e:term : command =>
   `(#eval (eval $e).getD (.var (.fvar "Error")))
+
+/--
+  Evaluate the computation (no maximum number of steps)
+-/
+def simplify : Computation → Option Computation
+| .ret v => some (.ret v)
+| c =>
+  match evalSingleStep c with
+  | some c' => simplify c'
+  | none => some c
+partial_fixpoint
+
+macro "#simplifyLang " e:term : command =>
+  `(#eval (simplify $e).getD (.ret (.var (.fvar "Error"))))

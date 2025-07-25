@@ -23,6 +23,7 @@ def Value.format (prec : Nat) : Value → Format
 | .bool true => "True"
 | .bool false => "False"
 | .string s => s
+| .pair v₁ v₂ => .group <| "(" ++  v₁.format prec ++ ", " ++ v₂.format prec ++ ")"
 | .unit => "()"
 | .lam c => .group <| "fun " ++ .nest 2 (.line ++ c.format prec)
 | .hdl h => h.format prec
@@ -36,6 +37,8 @@ def Computation.format (prec : Nat) : Computation → Format
 | .bind c₁ c₂ => .group <| "do ← " ++ c₁.format prec ++ " in " ++ .line ++ c₂.format prec
 | .opCall name v c => .group <| name ++ "(" ++ v.format prec ++ "; " ++ c.format prec ++ ")"
 | .join v₁ v₂ => .group <| v₁.format prec ++ " ++ " ++ v₂.format prec
+| .fst v => .group <| "fst " ++ v.format prec
+| .snd v => .group <| "snd " ++ v.format prec
 
 def OpClause.format (prec : Nat) : OpClause → Format
 | ⟨op, body⟩ => .group <| "{op := " ++ op ++ ", body := " ++ body.format prec ++  "}"
@@ -68,9 +71,9 @@ scoped syntax:max ident : embedded
 /-- Grouping of expressions -/
 scoped syntax "(" embedded ")" : embedded
 /-- Application -/
-scoped syntax:arg embedded:arg embedded:max : embedded
+scoped syntax embedded embedded : embedded
 /-- A function -/
-scoped syntax:max "fun" ident " ↦ " embedded:arg : embedded
+scoped syntax:max "fun" ident " ↦ " embedded : embedded
 /-- Bool true -/
 scoped syntax "True" : embedded
 /-- Bool false -/
@@ -78,20 +81,31 @@ scoped syntax "False" : embedded
 /-- Return -/
 scoped syntax "return " embedded : embedded
 /-- OpCall -/
-scoped syntax ident "(" embedded "; " embedded ")" : embedded
+scoped syntax ident "⟨" embedded "; " embedded "⟩" : embedded
+scoped syntax ident "⟨" embedded "⟩" : embedded
 /-- Bind -/
 scoped syntax "do " ident " ← " embedded " in " embedded : embedded
+scoped syntax "do " "(" ident ", " ident ")" " ← " embedded " in " embedded : embedded
+scoped syntax "← " embedded ";" embedded : embedded
 /-- If then else -/
 scoped syntax "if " embedded " then " embedded " else " embedded : embedded
 /-- Handler -/
 scoped syntax "with " embedded " handle " embedded : embedded
 /-- OpClause -/
-scoped syntax str "(x,k)" " ↦ " embedded : embedded
+scoped syntax str "(" ident ", " ident ")" " ↦ " embedded : embedded
 scoped syntax "handler " "{" "return " ident " ↦ " embedded ", " "ops " " := " "[" embedded,* "]" "}" : embedded
 scoped syntax "handler " "{" "ops " " := " "[" embedded,* "]" "}" : embedded
-scoped syntax "str( " str  ")" : embedded
+/-- String -/
+scoped syntax "str " str : embedded
+/-- Join -/
 scoped syntax "join(" embedded ", " embedded ")" : embedded
+/-- Unit -/
 scoped syntax "()" : embedded
+/-- Pair -/
+scoped syntax "pair(" embedded ", " embedded ")" : embedded
+scoped syntax "fst " embedded : embedded
+scoped syntax "snd " embedded : embedded
+/-- Embed Lean term -/
 scoped syntax:max "~" term:max : embedded
 scoped syntax (name := embeddedTerm) "{{{" embedded "}}}" : term
 
@@ -153,7 +167,7 @@ partial def toTermSyntax : Syntax → ElabM (TSyntax `term)
 | `(embedded| return $e) => do
   let t ← toTermSyntax e
   `(Computation.ret $t)
-| `(embedded| $op:ident ( $v ; $k )) => do
+| `(embedded| $op:ident ⟨ $v ; $k ⟩) => do
   let vTerm ← toTermSyntax v
   /-
     Extract the body of the lambda because
@@ -161,9 +175,17 @@ partial def toTermSyntax : Syntax → ElabM (TSyntax `term)
   -/
   let kTerm := extractLambdaBody (←toTermSyntax k)
   `(Computation.opCall $(Lean.quote op.getId.toString) $vTerm $kTerm)
+-- Default return in op call
+| `(embedded| $op:ident ⟨$v⟩) => do
+  let newSyntax : TSyntax `embedded ← `(embedded| $op:ident ⟨$v; fun y ↦ (return y)⟩)
+  toTermSyntax newSyntax.raw
 | `(embedded| do $x:ident ← $c₁ in $c₂) => do
   let c₁Term ← toTermSyntax c₁
   let c₂Term ← withBoundIdentifier x.getId (toTermSyntax c₂)
+  `(Computation.bind $c₁Term $c₂Term)
+| `(embedded| ← $c₁; $c₂) => do
+  let c₁Term ← toTermSyntax c₁
+  let c₂Term ← withBoundIdentifier (←mkFreshUserName `x) (toTermSyntax c₂)
   `(Computation.bind $c₁Term $c₂Term)
 | `(embedded| if $v then $c₁ else $c₂) => do
   let vTerm ← toTermSyntax v
@@ -175,8 +197,8 @@ partial def toTermSyntax : Syntax → ElabM (TSyntax `term)
   let cTerm ← toTermSyntax c
   `(Computation.handle $hTerm $cTerm)
 | `(embedded| ~$e) => pure e
-| `(embedded| $t:str (x,k) ↦ $e) => do
-  let eTerm ← withBoundIdentifier `x (withBoundIdentifier `k (toTermSyntax e))
+| `(embedded| $t:str ($x, $k) ↦ $e) => do
+  let eTerm ← withBoundIdentifier x.getId (withBoundIdentifier k.getId (toTermSyntax e))
   `(OpClause.mk $t $eTerm)
 | `(embedded| handler {return $x ↦ $e, ops := [$xs,*] }) => do
   -- Assumed to have one dangling bvar
@@ -187,12 +209,36 @@ partial def toTermSyntax : Syntax → ElabM (TSyntax `term)
 | `(embedded| handler {ops := [$xs,*] }) => do
     let opsTerms ← xs.getElems.mapM (toTermSyntax ·)
     `(Value.hdl (Handler.mk none [$opsTerms,*]))
-| `(embedded| str($s:str)) => `(Value.string $s)
+-- str
+| `(embedded| str $s:str) => `(Value.string $s)
+-- join
 | `(embedded| join($e1, $e2)) => do
   let e1Term ← toTermSyntax e1
   let e2Term ← toTermSyntax e2
   `(Computation.join $e1Term $e2Term)
+-- Unit
 | `(embedded| ()) => `(Value.unit)
+-- Pair construction
+| `(embedded| pair($e1, $e2)) => do
+  let e1Term ← toTermSyntax e1
+  let e2Term ← toTermSyntax e2
+  `(Value.pair $e1Term $e2Term)
+-- fst
+| `(embedded| fst $e) => do
+  let eTerm ← toTermSyntax e
+  `(Computation.fst $eTerm)
+-- snd
+| `(embedded| snd $e) => do
+  let eTerm ← toTermSyntax e
+  `(Computation.snd $eTerm)
+-- Bind pair destruction
+| `(embedded| do ($x, $y) ← $c₁ in $c₂) => do
+  let newSyntax : TSyntax `embedded ← `(embedded|
+    do c ← $c₁ in
+    do $x ← fst c in
+    do $y ← snd c in
+    $c₂)
+  toTermSyntax newSyntax.raw
 | _ => pure <| TSyntax.mk Syntax.missing
 
 @[term_elab embeddedTerm] def elabEmbedded : TermElab := fun stx _ => do

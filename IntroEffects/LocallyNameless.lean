@@ -18,10 +18,15 @@ def abstractValueLvl (me : Name) (level : Nat) : Value → Value
 | .var (.fvar you) => if you = me then .var (.bvar level) else .var (.fvar you)
 | .lam comp => .lam <| abstractComputationLvl me (level+1) comp
 | .hdl h => .hdl <| abstractHandlerLvl me level h
-| other => other
+| .pair v₁ v₂ => .pair (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
+| .string s => .string s
+| .bool b => .bool b
+| .unit => .unit
+| .var (.bvar b) => .var (.bvar b)
 termination_by v => sizeOf v
 decreasing_by
   all_goals simp
+  all_goals grind
 
 /--
   Replace every free variable whose name is `me`
@@ -35,6 +40,8 @@ def abstractComputationLvl (me : Name) (level : Nat) : Computation → Computati
 | .app v₁ v₂ => .app (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
 | .handle v c => .handle (abstractValueLvl me level v) (abstractComputationLvl me level c)
 | .join v₁ v₂ => .join (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
+| .fst v => .fst (abstractValueLvl me level v)
+| .snd v => .snd (abstractValueLvl me level v)
 termination_by c => sizeOf c
 decreasing_by
   all_goals simp
@@ -76,10 +83,15 @@ def instantiateValueLvl (what : Value) (level : Nat) : Value → Value
 | var@(.var (.bvar bvarLevel)) => if bvarLevel = level then what else var
 | .lam c => .lam <| instantiateComputationLvl what (level + 1) c
 | .hdl h => .hdl <| instantiateHandlerLvl what level h
-| other => other
+| .pair v₁ v₂ => .pair (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
+| .string s => .string s
+| .bool b => .bool b
+| .unit => .unit
+| .var v => .var v
 termination_by v => sizeOf v
 decreasing_by
   all_goals simp
+  all_goals grind
 
 /--
   Replace every dangling bound variable pointing at `level`
@@ -93,6 +105,8 @@ def instantiateComputationLvl (what : Value) (level : Nat) : Computation → Com
 | .app v₁ v₂ => .app (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
 | .handle v c => .handle (instantiateValueLvl what level v) (instantiateComputationLvl what level c)
 | .join v₁ v₂ => .join (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
+| .fst v => .fst (instantiateValueLvl what level v)
+| .snd v => .snd (instantiateValueLvl what level v)
 termination_by c => sizeOf c
 decreasing_by
   all_goals simp

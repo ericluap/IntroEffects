@@ -83,7 +83,8 @@ inductive Step : Computation → Computation → Prop
 | handleOpMiss h op v body (hop : h.lookup op = none) :
   Step (.handle (.hdl h) (.opCall op v body)) (opCall op v (.handle (.hdl h) body))
 | join s₁ s₂ : Step (.join (.string s₁) (.string s₂)) (.ret (.string (s₁ ++ " " ++ s₂)))
-
+| fstStep v₁ v₂ : Step (.fst (.pair v₁ v₂)) (.ret v₁)
+| sndStep v₁ v₂ : Step (.snd (pair v₁ v₂)) (.ret v₂)
 infix:50 " ⤳ " => Step
 
 /--

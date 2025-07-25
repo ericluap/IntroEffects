@@ -32,6 +32,7 @@ inductive Value where
 | bool : Bool → Value
 | string : String → Value
 | unit : Value
+| pair : Value → Value → Value
 /-- Assumes that the computation passed in has a dangling bvar -/
 | lam : Computation → Value
 | hdl : Handler → Value
@@ -62,6 +63,8 @@ inductive Computation where
 -/
 | handle : Value → Computation → Computation
 | join : Value → Value → Computation
+| fst : Value → Computation
+| snd : Value → Computation
 deriving BEq
 
 
