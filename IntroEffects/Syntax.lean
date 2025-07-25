@@ -13,49 +13,81 @@ section Output
 open Std (Format)
 open Lean.Parser (maxPrec minPrec argPrec)
 
+/--
+  Track the names of the bvars
+-/
+structure Ctx where
+  bound : List String
+
+def Ctx.addBvar (ctx : Ctx) (name : String) : Ctx := ⟨name :: ctx.bound⟩
+
+def Ctx.lookup (ctx : Ctx) (bvar : Nat) : String :=
+  ctx.bound[bvar]?.getD (toString bvar)
+
+def Ctx.getNewName (ctx : Ctx) : String := "x" ++ toString ctx.bound.length
+
 /-
   Improve the formatting of the output
 -/
 mutual
-def Value.format (prec : Nat) : Value → Format
-| .var (.bvar n) => .group <| "bvar " ++ reprPrec n 0
+def Value.format (prec : Nat) (ctx : Ctx): Value → Format
+| .var (.bvar n) => .group <| ctx.lookup n
 | .var (.fvar n) => n
 | .bool true => "True"
 | .bool false => "False"
-| .string s => s
-| .pair v₁ v₂ => .group <| "(" ++  v₁.format prec ++ ", " ++ v₂.format prec ++ ")"
+| .string s => "\"" ++ s ++ "\""
+| .pair v₁ v₂ => .group <| "(" ++  v₁.format prec ctx ++ ", " ++ v₂.format prec ctx ++ ")"
 | .unit => "()"
-| .lam c => .group <| "fun " ++ .nest 2 (.line ++ c.format prec)
-| .hdl h => h.format prec
+| .lam c =>
+  let name := ctx.getNewName
+  .group <| "fun " ++ name ++ " ↦ " ++ .nest 2 (.line ++ c.format prec (ctx.addBvar name))
+| .hdl h => h.format prec ctx
 
-def Computation.format (prec : Nat) : Computation → Format
-| .ret v => .group <| "return " ++ v.format prec
-| .handle h c => .group <| "with " ++ h.format prec ++ " handle" ++ .line ++ .nest 2 (c.format prec)
-| .app v₁ v₂ => .group <| v₁.format prec ++ " " ++ v₂.format prec
-| .ite v c₁ c₂ => .group <| "if " ++ v.format prec ++ .line ++ " then " ++
-  c₁.format prec ++ .line ++ " else " ++ c₂.format prec
-| .bind c₁ c₂ => .group <| "do ← " ++ c₁.format prec ++ " in " ++ .line ++ c₂.format prec
-| .opCall name v c => .group <| name ++ "(" ++ v.format prec ++ "; " ++ c.format prec ++ ")"
-| .join v₁ v₂ => .group <| v₁.format prec ++ " ++ " ++ v₂.format prec
-| .fst v => .group <| "fst " ++ v.format prec
-| .snd v => .group <| "snd " ++ v.format prec
+def Computation.format (prec : Nat) (ctx : Ctx) : Computation → Format
+| .ret v => .group <| "return " ++ v.format prec ctx
+| .handle h c => .group <| "with " ++ h.format prec ctx ++ " handle" ++ .line ++ .nest 2 (c.format prec ctx)
+| .app v₁ v₂ => .group <| v₁.format prec ctx ++ " " ++ v₂.format prec ctx
+| .ite v c₁ c₂ => .group <| "if " ++ v.format prec ctx ++ .line ++ " then " ++
+  c₁.format prec ctx ++ .line ++ " else " ++ c₂.format prec ctx
+| .bind c₁ c₂ =>
+  let name := ctx.getNewName
+  .group <| "do " ++ name ++ " ← " ++ c₁.format prec ctx ++ " in " ++ .line ++ c₂.format prec (ctx.addBvar name)
+| .opCall name v c =>
+  let newName := ctx.getNewName
+  .group <| name ++ "(" ++ v.format prec ctx ++ "; fun " ++ newName ++ " ↦ " ++ c.format prec (ctx.addBvar newName) ++ ")"
+| .join v₁ v₂ => .group <| v₁.format prec ctx ++ " ++ " ++ v₂.format prec ctx
+| .fst v => .group <| "fst " ++ v.format prec ctx
+| .snd v => .group <| "snd " ++ v.format prec ctx
 
-def OpClause.format (prec : Nat) : OpClause → Format
-| ⟨op, body⟩ => .group <| "{op := " ++ op ++ ", body := " ++ body.format prec ++  "}"
-def Handler.format (prec : Nat) : Handler → Format
+def OpClause.format (prec : Nat) (ctx : Ctx) : OpClause → Format
+| ⟨op, body⟩ =>
+  let name1 := ctx.getNewName
+  let name2 := (ctx.addBvar name1).getNewName
+  let opsCtx := (ctx.addBvar name1).addBvar name2
+  .group <| "{" ++ op ++ "(" ++ name1 ++ ", " ++ name2 ++ ") ↦ " ++ .line ++ body.format prec opsCtx ++ "}"
+def Handler.format (prec : Nat) (ctx : Ctx) : Handler → Format
 | ⟨ret?, ops⟩ =>
-  .group <| "{ret? := " ++ (repr ret?) ++ ", " ++ .line ++ "ops := [" ++
-    .joinSep (ops.map (·.format prec)) (", " ++ .line) ++ "]}"
+  let name := ctx.getNewName
+  let retStr := match ret? with
+  | none => "none"
+  | some ret => "return " ++ name ++ " ↦ " ++ ret.format prec (ctx.addBvar name)
+  .group <| "{" ++ retStr ++ ", " ++ .line ++ "ops := [" ++
+    .joinSep (ops.map (·.format prec ctx)) (", " ++ .line) ++ "]}"
 where
   repr : Option Computation → Format
   | none => "none"
-  | some c => c.format prec
+  | some c => c.format prec (ctx.addBvar ctx.getNewName)
 end
 
 instance : Repr Computation where
-  reprPrec comp n := comp.format n
+  reprPrec comp n := comp.format n ⟨[]⟩
 instance : Repr Value where
-  reprPrec value n := value.format n
+  reprPrec value n := value.format n ⟨[]⟩
+
+instance : ToString Computation where
+  toString := toString ∘ repr
+instance : ToString Value where
+  toString := toString ∘ repr
 end Output
 
 /-
@@ -123,7 +155,6 @@ abbrev ElabM := StateT Ctx TermElabM
 -/
 def lookup (x : Lean.Name) : Ctx → Option Nat
 | ⟨bs⟩ => bs.idxOf? x
-
 
 /--
   Extract the body from a lambda in syntax

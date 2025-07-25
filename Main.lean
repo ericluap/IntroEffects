@@ -10,8 +10,7 @@ def printFullName := {{{
   do forename ← read⟨()⟩ in
   ← print⟨str "What is your surname?"⟩;
   do surname ← read⟨()⟩ in
-  do joined ← join(forename, surname) in
-  return joined
+  join(forename, surname)
 }}}
 
 def alwaysRead := {{{
@@ -19,12 +18,26 @@ def alwaysRead := {{{
 }}}
 
 /--
-info: Bob Bob
+info: "Bob Bob"
 -/
 #guard_msgs in
 #evalLang {{{
   do h ← ~alwaysRead (str "Bob") in
   with h handle ~printFullName
+}}}
+
+
+-- We can also view all the reductions done
+/--
+info: fun x0 ↦  if x0  then return "hi"  else return "bye" False
+
+if False  then return "hi"  else return "bye"
+
+return "bye"
+-/
+#guard_msgs in
+#evalLangTrace {{{
+    ((fun x ↦ if x then return (str "hi") else return (str "bye")) False)
 }}}
 
 def abc := {{{
@@ -46,7 +59,7 @@ def collect := {{{
 }}}
 
 /--
-info: ((), A B C )
+info: ((), "A B C")
 -/
 #guard_msgs in
 #evalLang {{{
@@ -60,7 +73,7 @@ def reverse := {{{
 }}}
 
 /--
-info: ((), C B A )
+info: ((), "C B A")
 -/
 #guard_msgs in
 #evalLang {{{
@@ -82,7 +95,7 @@ def collect' := {{{
 }}}
 
 /--
-info: ((),  A B C)
+info: ((), "A B C")
 -/
 #guard_msgs in
 #evalLang {{{
@@ -91,4 +104,19 @@ info: ((),  A B C)
 }}}
 
 def main : IO Unit :=
-  IO.println s!"Hello, !"
+  let hello_world := evalLang {{{
+    do (_a, out) ←
+      with ~collect handle
+        ← print⟨str "Hello,"⟩;
+        print⟨str "world!"⟩
+      in
+    return out
+  }}}
+
+  IO.println hello_world
+
+/--
+info: "Hello, world!"
+-/
+#guard_msgs in
+#eval main

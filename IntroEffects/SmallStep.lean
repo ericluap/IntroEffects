@@ -23,6 +23,11 @@ def Handler.lookup (hdl : Handler) (name : Name) :=
 def instantiateOpClauseBody (arg cont : Value) (body : Computation) : Computation :=
   instantiateComputationLvl arg 1 (instantiateComputationLvl cont 0 body)
 
+def strAppend : String → String → String
+| "", s => s
+| s, "" => s
+| s₁, s₂ => s₁ ++ " " ++ s₂
+
 /--
   The small step operational semantics
 -/
@@ -82,8 +87,17 @@ inductive Step : Computation → Computation → Prop
 -/
 | handleOpMiss h op v body (hop : h.lookup op = none) :
   Step (.handle (.hdl h) (.opCall op v body)) (opCall op v (.handle (.hdl h) body))
-| join s₁ s₂ : Step (.join (.string s₁) (.string s₂)) (.ret (.string (s₁ ++ " " ++ s₂)))
+/--
+  `join s₁ s₂ ⤳ return (str(strAppend s₁ s₂))`
+-/
+| join s₁ s₂ : Step (.join (.string s₁) (.string s₂)) (.ret (.string (strAppend s₁ s₂)))
+/--
+  `fst pair(v₁, v₂) ⤳ return v₁`
+-/
 | fstStep v₁ v₂ : Step (.fst (.pair v₁ v₂)) (.ret v₁)
+/--
+  `snd pair(v₁, v₂) ⤳ return v₂`
+-/
 | sndStep v₁ v₂ : Step (.snd (pair v₁ v₂)) (.ret v₂)
 infix:50 " ⤳ " => Step
 

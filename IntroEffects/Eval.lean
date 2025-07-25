@@ -66,7 +66,7 @@ def evalSingleStep : Computation → Option Computation
   | none => some <| .opCall op v (.handle (.hdl h) body)
 | .handle (.hdl h) c =>
   (evalSingleStep c).map (fun c' => .handle (.hdl h) c')
-| .join (.string s₁) (.string s₂) => some <| .ret (.string (s₁ ++ " " ++ s₂))
+| .join (.string s₁) (.string s₂) => some <| .ret (.string (strAppend s₁ s₂))
 | .fst (.pair v₁ _) => some <| .ret v₁
 | .snd (.pair _ v₂) => some <| .ret v₂
 | _ => none
@@ -333,8 +333,10 @@ theorem eval_iff_stepStar :
     eval c = some v ↔ c ⤳⋆ .ret v :=
   eval_iff_evalFuel.trans evalFuel_iff_stepStar
 
+def evalLang (c : Computation) : Value := (eval c).getD (.var (.fvar "Error"))
+
 macro "#evalLang " e:term : command =>
-  `(#eval (eval $e).getD (.var (.fvar "Error")))
+  `(#eval (evalLang $e))
 
 /--
   Evaluate the computation (no maximum number of steps)
@@ -349,3 +351,20 @@ partial_fixpoint
 
 macro "#simplifyLang " e:term : command =>
   `(#eval (simplify $e).getD (.ret (.var (.fvar "Error"))))
+
+def evalTrace' : Computation → List Computation → List Computation
+| .ret v, xs => .ret v :: xs
+| c, xs =>
+  match evalSingleStep c with
+  | some c' => evalTrace' c' (c :: xs)
+  | none => c :: xs
+partial_fixpoint
+
+/--
+  Evaluate the computation (no maximum number of steps) and
+  track the steps taken
+-/
+def evalTrace (c : Computation) : List Computation := evalTrace' c [] |>.reverse
+
+macro "#evalLangTrace " e:term : command =>
+  `(#eval (evalTrace $e).foldl (fun acc s => acc ++ repr s ++ "\n\n") "")
