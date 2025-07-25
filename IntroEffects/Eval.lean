@@ -66,6 +66,7 @@ def evalSingleStep : Computation → Option Computation
   | none => some <| .opCall op v (.handle (.hdl h) body)
 | .handle (.hdl h) c =>
   (evalSingleStep c).map (fun c' => .handle (.hdl h) c')
+| .join (.string s₁) (.string s₂) => some <| .ret (.string (s₁ ++ " " ++ s₂))
 | _ => none
 
 /--
@@ -137,7 +138,18 @@ theorem evalSingleStep_sound {c c' : Computation} :
         apply Step.handleInner
         apply evalSingleStep_sound
         assumption
+      | join =>
+        simp [evalSingleStep]
+        intro x h1 h2
+        have := evalSingleStep_sound h1
+        rw [←h2]
+        exact Step.handleInner h _ _ this
     | _ => simp [evalSingleStep]
+  | join v1 v2 =>
+    cases v1 <;> cases v2 <;> simp [evalSingleStep]
+    · intro h
+      rw [←h]
+      constructor
 
 /--
   If `c ⤳ c'`, then `evalSingleStep` reduces `c` to `c'`.

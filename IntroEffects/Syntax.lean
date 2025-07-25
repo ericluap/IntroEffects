@@ -22,6 +22,8 @@ def Value.format (prec : Nat) : Value → Format
 | .var (.fvar n) => n
 | .bool true => "True"
 | .bool false => "False"
+| .string s => s
+| .unit => "()"
 | .lam c => .group <| "fun " ++ .nest 2 (.line ++ c.format prec)
 | .hdl h => h.format prec
 
@@ -33,6 +35,7 @@ def Computation.format (prec : Nat) : Computation → Format
   c₁.format prec ++ .line ++ " else " ++ c₂.format prec
 | .bind c₁ c₂ => .group <| "do ← " ++ c₁.format prec ++ " in " ++ .line ++ c₂.format prec
 | .opCall name v c => .group <| name ++ "(" ++ v.format prec ++ "; " ++ c.format prec ++ ")"
+| .join v₁ v₂ => .group <| v₁.format prec ++ " ++ " ++ v₂.format prec
 
 def OpClause.format (prec : Nat) : OpClause → Format
 | ⟨op, body⟩ => .group <| "{op := " ++ op ++ ", body := " ++ body.format prec ++  "}"
@@ -69,26 +72,28 @@ scoped syntax:arg embedded:arg embedded:max : embedded
 /-- A function -/
 scoped syntax:max "fun" ident " ↦ " embedded:arg : embedded
 /-- Bool true -/
-syntax "True" : embedded
+scoped syntax "True" : embedded
 /-- Bool false -/
-syntax "False" : embedded
+scoped syntax "False" : embedded
 /-- Return -/
-syntax "return " embedded : embedded
+scoped syntax "return " embedded : embedded
 /-- OpCall -/
-syntax ident "(" embedded "; " embedded ")" : embedded
+scoped syntax ident "(" embedded "; " embedded ")" : embedded
 /-- Bind -/
-syntax "do " ident " ← " embedded " in " embedded : embedded
+scoped syntax "do " ident " ← " embedded " in " embedded : embedded
 /-- If then else -/
-syntax "if " embedded " then " embedded " else " embedded : embedded
+scoped syntax "if " embedded " then " embedded " else " embedded : embedded
 /-- Handler -/
 scoped syntax "with " embedded " handle " embedded : embedded
 /-- OpClause -/
-syntax str "(x,k)" " ↦ " embedded : embedded
-syntax "handler " "{" "return " ident " ↦ " embedded ", " "ops " " := " "[" embedded,* "]" "}" : embedded
-syntax "handler " "{" "ops " " := " "[" embedded,* "]" "}" : embedded
-
-syntax:max "~" term:max : embedded
-syntax (name := embeddedTerm) "{{{" embedded "}}}" : term
+scoped syntax str "(x,k)" " ↦ " embedded : embedded
+scoped syntax "handler " "{" "return " ident " ↦ " embedded ", " "ops " " := " "[" embedded,* "]" "}" : embedded
+scoped syntax "handler " "{" "ops " " := " "[" embedded,* "]" "}" : embedded
+scoped syntax "str( " str  ")" : embedded
+scoped syntax "join(" embedded ", " embedded ")" : embedded
+scoped syntax "()" : embedded
+scoped syntax:max "~" term:max : embedded
+scoped syntax (name := embeddedTerm) "{{{" embedded "}}}" : term
 
 /--
   A context to keep track of the
@@ -182,6 +187,12 @@ partial def toTermSyntax : Syntax → ElabM (TSyntax `term)
 | `(embedded| handler {ops := [$xs,*] }) => do
     let opsTerms ← xs.getElems.mapM (toTermSyntax ·)
     `(Value.hdl (Handler.mk none [$opsTerms,*]))
+| `(embedded| str($s:str)) => `(Value.string $s)
+| `(embedded| join($e1, $e2)) => do
+  let e1Term ← toTermSyntax e1
+  let e2Term ← toTermSyntax e2
+  `(Computation.join $e1Term $e2Term)
+| `(embedded| ()) => `(Value.unit)
 | _ => pure <| TSyntax.mk Syntax.missing
 
 @[term_elab embeddedTerm] def elabEmbedded : TermElab := fun stx _ => do

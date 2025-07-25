@@ -34,6 +34,7 @@ def abstractComputationLvl (me : Name) (level : Nat) : Computation → Computati
 | .ite v c₁ c₂ => .ite (abstractValueLvl me level v) (abstractComputationLvl me level c₁) (abstractComputationLvl me level c₂)
 | .app v₁ v₂ => .app (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
 | .handle v c => .handle (abstractValueLvl me level v) (abstractComputationLvl me level c)
+| .join v₁ v₂ => .join (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
 termination_by c => sizeOf c
 decreasing_by
   all_goals simp
@@ -91,6 +92,7 @@ def instantiateComputationLvl (what : Value) (level : Nat) : Computation → Com
 | .ite v c₁ c₂ => .ite (instantiateValueLvl what level v) (instantiateComputationLvl what level c₁) (instantiateComputationLvl what level c₂)
 | .app v₁ v₂ => .app (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
 | .handle v c => .handle (instantiateValueLvl what level v) (instantiateComputationLvl what level c)
+| .join v₁ v₂ => .join (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
 termination_by c => sizeOf c
 decreasing_by
   all_goals simp

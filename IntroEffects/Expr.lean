@@ -30,6 +30,8 @@ mutual
 inductive Value where
 | var : Var → Value
 | bool : Bool → Value
+| string : String → Value
+| unit : Value
 /-- Assumes that the computation passed in has a dangling bvar -/
 | lam : Computation → Value
 | hdl : Handler → Value
@@ -59,6 +61,7 @@ inductive Computation where
   (What if the value given is not `.hdl`?)
 -/
 | handle : Value → Computation → Computation
+| join : Value → Value → Computation
 deriving BEq
 
 
