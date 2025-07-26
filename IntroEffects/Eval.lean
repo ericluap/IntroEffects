@@ -11,10 +11,17 @@ import IntroEffects.SmallStep
 def evalSingleStep : Computation → Option Computation
 /- `(λx. body) v → body[v/x]`
 
-    Since `body`is assumed to have one dangling bvar,
+    Since `body` is assumed to have one dangling bvar,
     we instantiate it with `v` to get the substitution.
  -/
 | .app (.lam body) v => some <| instantiateComp v body
+/- `(recfun f x. body) v → body[recfun f x.body/f, v/x]
+
+    Since `body` is assumed to have two dangling bvars,
+    we replace the outer dangling bvar with a reference to itself,
+    and the inner dangling bvar with `v`.
+-/
+| .app (.recfun body) v => some <| instantiate2 (.recfun body) v body
 | .ite (.bool true) c₁ _ => some c₁
 | .ite (.bool false) _ c₂ => some c₂
 /- `do x ← return v in c → c[v/x]`
@@ -55,7 +62,7 @@ def evalSingleStep : Computation → Option Computation
   -/
   | some ⟨_, c⟩ =>
     let cont := .lam (.handle (.hdl h) body)
-    some <| instantiateOpClauseBody v cont c
+    some <| instantiate2 v cont c
   /- `with h handle op(v; y.body) → op(v; y. with h handle body)`
 
     Since `body` is the body of an `opCall`,
@@ -69,6 +76,12 @@ def evalSingleStep : Computation → Option Computation
 | .join (.string s₁) (.string s₂) => some <| .ret (.string (strAppend s₁ s₂))
 | .fst (.pair v₁ _) => some <| .ret v₁
 | .snd (.pair _ v₂) => some <| .ret v₂
+| .add (.num v₁) (.num v₂) => some <| .ret (.num (v₁ + v₂))
+| .sub (.num v₁) (.num v₂) => some <| .ret (.num (v₁ - v₂))
+| .max (.num v₁) (.num v₂) => some <| .ret (.num (Max.max v₁ v₂))
+| .lt (.num v₁) (.num v₂) => some <| .ret (.bool (v₁ < v₂))
+| .mul (.num v₁) (.num v₂) => some <| .ret (.num (v₁ * v₂))
+| .eq v₁ v₂ => some <| .ret (.bool (v₁ == v₂))
 | _ => none
 
 /--
@@ -81,9 +94,10 @@ theorem evalSingleStep_sound {c c' : Computation} :
   | ret => simp [evalSingleStep]
   | app fn arg =>
     cases fn <;> simp [evalSingleStep]
-    · intro h
+    all_goals
+    ( intro h
       rw [←h]
-      solve_by_elim
+      constructor)
   | opCall => simp [evalSingleStep]
   | ite v =>
     cases v <;> try simp [evalSingleStep]
@@ -133,23 +147,35 @@ theorem evalSingleStep_sound {c c' : Computation} :
           simp [evalSingleStep, hlookup]
           intro h; rw [←h]
           solve_by_elim
-      | handle | bind | ite | app | join | fst | snd =>
+      | eq =>
         simp [evalSingleStep]
-        intro x eq1 eq2
-        rw [←eq2]
-        apply Step.handleInner
-        apply evalSingleStep_sound
-        assumption
+        all_goals
+        try (
+          intro x eq1 eq2
+          rw [←eq2]
+          apply Step.handleInner
+          apply evalSingleStep_sound
+          assumption)
+        · intro h; rw [←h]
+          solve_by_elim
+      | _ =>
+        simp [evalSingleStep]
+        all_goals
+        try (
+          intro x eq1 eq2
+          rw [←eq2]
+          apply Step.handleInner
+          apply evalSingleStep_sound
+          assumption)
+
     | _ => simp [evalSingleStep]
-  | join v1 v2 =>
-    cases v1 <;> cases v2 <;> simp [evalSingleStep]
-    · intro h; rw [←h]; constructor
-  | fst v1 =>
+  | fst v1 | snd v1 =>
     cases v1 <;> simp [evalSingleStep]
     · intro h; rw [←h]; constructor
-  | snd v2 =>
-    cases v2 <;> simp [evalSingleStep]
-    · intro h; rw [←h]; constructor
+  | _ v1 v2 =>
+    cases v1 <;> cases v2 <;> simp [evalSingleStep]
+    all_goals (intro h; rw [←h]; constructor)
+
 
 /--
   If `c ⤳ c'`, then `evalSingleStep` reduces `c` to `c'`.

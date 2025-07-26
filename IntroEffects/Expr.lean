@@ -31,10 +31,16 @@ inductive Value where
 | var : Var → Value
 | bool : Bool → Value
 | string : String → Value
+| num : Int → Value
 | unit : Value
 | pair : Value → Value → Value
 /-- Assumes that the computation passed in has a dangling bvar -/
 | lam : Computation → Value
+/-- Assumes that the computation passed in has two dangling bvars.
+  The outermost dangling bvar will refer to the function itself,
+  the inner one is the normal argument.
+ -/
+| recfun : Computation → Value
 | hdl : Handler → Value
 deriving BEq
 
@@ -65,6 +71,12 @@ inductive Computation where
 | join : Value → Value → Computation
 | fst : Value → Computation
 | snd : Value → Computation
+| add : Value → Value → Computation
+| sub : Value → Value → Computation
+| mul : Value → Value → Computation
+| max : Value → Value → Computation
+| lt : Value → Value → Computation
+| eq : Value → Value → Computation
 deriving BEq
 
 

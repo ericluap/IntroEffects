@@ -20,7 +20,7 @@ def Handler.lookup (hdl : Handler) (name : Name) :=
   we replace the inner bvar with `cont`
   and the outer bvar with `arg`.
 -/
-def instantiateOpClauseBody (arg cont : Value) (body : Computation) : Computation :=
+def instantiate2 (arg cont : Value) (body : Computation) : Computation :=
   instantiateComputationLvl arg 1 (instantiateComputationLvl cont 0 body)
 
 def strAppend : String → String → String
@@ -35,10 +35,17 @@ def strAppend : String → String → String
 inductive Step : Computation → Computation → Prop
 /-- `(λx. body) v ⤳ body[v/x]`
 
-    Since `body`is assumed to have one dangling bvar,
+    Since `body` is assumed to have one dangling bvar,
     we instantiate it with `v` to get the substitution.
  -/
 | beta v body : Step (app (lam body) v) (instantiateComp v body)
+/-- `(recfun f x. body) v ⤳ body[recfun f x. body/f, v/x]
+
+  Since `body` is assumed to have two dangling bvars,
+  we replace the outermost one with a reference to the function itself
+  and the inner one with the given argumetn `v`.
+-/
+| recBeta v body : Step (app (recfun body) v) (instantiate2 (recfun body) v body)
 /-- `if True then c₁ else c₂ ⤳ c₁` -/
 | iteTrue c₁ c₂ : Step (ite (bool true) c₁ c₂) c₁
 /-- `if False then c₁ else c₂ ⤳ c₂` -/
@@ -77,7 +84,7 @@ inductive Step : Computation → Computation → Prop
 -/
 | handleOpHit h op v body c (hop : h.lookup op = some ⟨op, c⟩) :
   Step (.handle (.hdl h) (.opCall op v body))
-    (instantiateOpClauseBody v (lam (.handle (.hdl h) body)) c)
+    (instantiate2 v (lam (.handle (.hdl h) body)) c)
 /-- `with h handle op(v; y.body) ⤳ op(v; y. with h handle body)`
 
     Since `body` is the body of an `opCall`,
@@ -99,6 +106,12 @@ inductive Step : Computation → Computation → Prop
   `snd pair(v₁, v₂) ⤳ return v₂`
 -/
 | sndStep v₁ v₂ : Step (.snd (pair v₁ v₂)) (.ret v₂)
+| add v₁ v₂ : Step (.add (.num v₁) (.num v₂)) (.ret (.num (v₁ + v₂)))
+| sub v₁ v₂ : Step (.sub (.num v₁) (.num v₂)) (.ret (.num (v₁ - v₂)))
+| max v₁ v₂ : Step (.max (.num v₁) (.num v₂)) (.ret (.num (Max.max v₁ v₂)))
+| lt v₁ v₂ : Step (.lt (.num v₁) (.num v₂)) (.ret (.bool (v₁ < v₂)))
+| mul v₁ v₂ : Step (.mul (.num v₁) (.num v₂)) (.ret (.num (v₁ * v₂)))
+| eq v₁ v₂ : Step (.eq v₁ v₂) (.ret (.bool (v₁ == v₂)))
 infix:50 " ⤳ " => Step
 
 /--

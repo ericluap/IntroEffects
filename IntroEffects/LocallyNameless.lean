@@ -19,10 +19,12 @@ def abstractValueLvl (me : Name) (level : Nat) : Value → Value
 | .lam comp => .lam <| abstractComputationLvl me (level+1) comp
 | .hdl h => .hdl <| abstractHandlerLvl me level h
 | .pair v₁ v₂ => .pair (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
+| .recfun body => .recfun <| abstractComputationLvl me (level+2) body
 | .string s => .string s
 | .bool b => .bool b
 | .unit => .unit
 | .var (.bvar b) => .var (.bvar b)
+| .num n => .num n
 termination_by v => sizeOf v
 decreasing_by
   all_goals simp
@@ -42,6 +44,12 @@ def abstractComputationLvl (me : Name) (level : Nat) : Computation → Computati
 | .join v₁ v₂ => .join (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
 | .fst v => .fst (abstractValueLvl me level v)
 | .snd v => .snd (abstractValueLvl me level v)
+| .add v₁ v₂ => .add (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
+| .sub v₁ v₂ => .sub (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
+| .max v₁ v₂ => .max (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
+| .lt v₁ v₂ => .lt (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
+| .mul v₁ v₂ => .mul (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
+| .eq v₁ v₂ => .eq (abstractValueLvl me level v₁) (abstractValueLvl me level v₂)
 termination_by c => sizeOf c
 decreasing_by
   all_goals simp
@@ -84,10 +92,12 @@ def instantiateValueLvl (what : Value) (level : Nat) : Value → Value
 | .lam c => .lam <| instantiateComputationLvl what (level + 1) c
 | .hdl h => .hdl <| instantiateHandlerLvl what level h
 | .pair v₁ v₂ => .pair (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
+| .recfun c => .recfun <| instantiateComputationLvl what (level + 2) c
 | .string s => .string s
 | .bool b => .bool b
 | .unit => .unit
 | .var v => .var v
+| .num n => .num n
 termination_by v => sizeOf v
 decreasing_by
   all_goals simp
@@ -107,6 +117,12 @@ def instantiateComputationLvl (what : Value) (level : Nat) : Computation → Com
 | .join v₁ v₂ => .join (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
 | .fst v => .fst (instantiateValueLvl what level v)
 | .snd v => .snd (instantiateValueLvl what level v)
+| .add v₁ v₂ => .add (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
+| .sub v₁ v₂ => .sub (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
+| .max v₁ v₂ => .max (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
+| .lt v₁ v₂ => .lt (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
+| .mul v₁ v₂ => .mul (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
+| .eq v₁ v₂ => .eq (instantiateValueLvl what level v₁) (instantiateValueLvl what level v₂)
 termination_by c => sizeOf c
 decreasing_by
   all_goals simp

@@ -103,6 +103,118 @@ info: ((), "A B C")
   f (str "")
 }}}
 
+def choose := {{{
+  fun xy ↦
+    do b ← decide⟨()⟩ in
+    if b then fst xy else snd xy
+}}}
+
+def pickTrue := {{{
+  handler {ops := ["decide"(_x, k) ↦ k True]}
+}}}
+
+def chooseDiff := {{{
+  do x₁ ← ~choose pair(15,30) in
+  do x₂ ← ~choose pair(5,10) in
+  x₁ - x₂
+}}}
+
+/--
+info: 10
+-/
+#guard_msgs in
+#evalLang {{{
+  with ~pickTrue handle ~chooseDiff
+}}}
+
+def pickMax := {{{
+  handler {ops := ["decide"(_x, k) ↦
+    do xt ← k True in
+    do xf ← k False in
+    max(xt, xf)
+  ]}
+}}}
+
+/--
+info: 25
+-/
+#guard_msgs in
+#evalLang {{{
+  with ~pickMax handle ~chooseDiff
+}}}
+
+def chooseInt := {{{
+  recfun chooseInt mn ↦
+    do m ← fst mn in
+    do n ← snd mn in
+    do isNLtM ← n < m in
+    if isNLtM then
+      fail⟨()⟩
+    else
+      do b ← decide⟨()⟩ in
+      if b then (return m) else
+      do mPlusOne ← m + 1 in
+      chooseInt pair(mPlusOne, n)
+}}}
+
+/--
+  Returns a pair of type `Bool × Int`
+  which is whether or not it is a square number,
+  and, if it is, what its square root is.
+-/
+def isSquare := {{{
+  fun n ↦
+  (recfun isSquareAux nAcc ↦
+    do n ← fst nAcc in
+    do acc ← snd nAcc in
+    do accSquared ← acc * acc in
+    do isNLtAccSquared ← n < accSquared in
+    if isNLtAccSquared then
+      return pair(False, 0)
+    else
+      do isNEqAccSquared ← n == accSquared in
+      if isNEqAccSquared then
+        return pair(True, acc)
+      else
+        do accPlusOne ← acc + 1 in
+        isSquareAux pair(n, accPlusOne)) pair(n, 0)
+}}}
+
+def pythagorean := {{{
+  fun mn ↦
+    do m ← fst mn in
+    do n ← snd mn in
+    do nMinusOne ← n - 1 in
+    do a ← ~chooseInt pair(m, nMinusOne) in
+    do aPlusOne ← a + 1 in
+    do b ← ~chooseInt pair(aPlusOne, n) in
+    do aSquared ← a * a in
+    do bSquared ← b * b in
+    do a2Plusb2 ← aSquared + bSquared in
+    do (isSquare, sqrt) ← ~isSquare a2Plusb2 in
+    if isSquare then
+      return pair(a, pair(b, sqrt))
+    else
+      fail⟨()⟩
+}}}
+
+def backtrack := {{{
+  handler {ops := ["decide"(_x, k) ↦
+    with
+      handler {ops := ["fail"(_x,_k) ↦ k False]}
+    handle
+      k True
+  ]}
+}}}
+
+/--
+info: (5, (12, 13))
+-/
+#guard_msgs in
+#evalLang {{{
+  with ~backtrack handle ~pythagorean pair(4,15)
+}}}
+
 def main : IO Unit :=
   let hello_world := evalLang {{{
     do (_a, out) ←

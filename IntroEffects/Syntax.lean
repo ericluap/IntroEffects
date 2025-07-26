@@ -38,9 +38,15 @@ def Value.format (prec : Nat) (ctx : Ctx): Value → Format
 | .string s => "\"" ++ s ++ "\""
 | .pair v₁ v₂ => .group <| "(" ++  v₁.format prec ctx ++ ", " ++ v₂.format prec ctx ++ ")"
 | .unit => "()"
+| .num n => repr n
 | .lam c =>
   let name := ctx.getNewName
   .group <| "fun " ++ name ++ " ↦ " ++ .nest 2 (.line ++ c.format prec (ctx.addBvar name))
+| .recfun c =>
+  let name1 := ctx.getNewName
+  let name2 := (ctx.addBvar name1).getNewName
+  let newCtx := (ctx.addBvar name1).addBvar name2
+  .group <| "recfun " ++ name1 ++ " " ++ name2 ++ " ↦ " ++ .nest 2 (.line ++ c.format prec newCtx)
 | .hdl h => h.format prec ctx
 
 def Computation.format (prec : Nat) (ctx : Ctx) : Computation → Format
@@ -58,6 +64,12 @@ def Computation.format (prec : Nat) (ctx : Ctx) : Computation → Format
 | .join v₁ v₂ => .group <| v₁.format prec ctx ++ " ++ " ++ v₂.format prec ctx
 | .fst v => .group <| "fst " ++ v.format prec ctx
 | .snd v => .group <| "snd " ++ v.format prec ctx
+| .add v₁ v₂ => .group <| v₁.format prec ctx ++ " + " ++ v₂.format prec ctx
+| .sub v₁ v₂ => .group <| v₁.format prec ctx ++ " - " ++ v₂.format prec ctx
+| .max v₁ v₂ => .group <| "max(" ++ v₁.format prec ctx ++ ", " ++ v₂.format prec ctx ++ ")"
+| .lt v₁ v₂ => .group <| v₁.format prec ctx ++ " < " ++ v₂.format prec ctx
+| .mul v₁ v₂ => .group <| v₁.format prec ctx ++ " * " ++ v₂.format prec ctx
+| .eq v₁ v₂ => .group <| v₁.format prec ctx ++ " == " ++ v₂.format prec ctx
 
 def OpClause.format (prec : Nat) (ctx : Ctx) : OpClause → Format
 | ⟨op, body⟩ =>
@@ -106,6 +118,7 @@ scoped syntax "(" embedded ")" : embedded
 scoped syntax embedded embedded : embedded
 /-- A function -/
 scoped syntax:max "fun" ident " ↦ " embedded : embedded
+scoped syntax "recfun " ident ident " ↦ " embedded : embedded
 /-- Bool true -/
 scoped syntax "True" : embedded
 /-- Bool false -/
@@ -137,6 +150,17 @@ scoped syntax "()" : embedded
 scoped syntax "pair(" embedded ", " embedded ")" : embedded
 scoped syntax "fst " embedded : embedded
 scoped syntax "snd " embedded : embedded
+/-- Numbers -/
+scoped syntax num : embedded
+scoped syntax:max "-" embedded : embedded
+scoped syntax embedded " + " embedded : embedded
+scoped syntax embedded " - " embedded : embedded
+scoped syntax embedded " * " embedded : embedded
+scoped syntax "max(" embedded ", " embedded ")" : embedded
+/-- Less than -/
+scoped syntax embedded " < " embedded : embedded
+/-- Eqaulity -/
+scoped syntax embedded " == " embedded : embedded
 /-- Embed Lean term -/
 scoped syntax:max "~" term:max : embedded
 scoped syntax (name := embeddedTerm) "{{{" embedded "}}}" : term
@@ -188,9 +212,13 @@ partial def toTermSyntax : Syntax → ElabM (TSyntax `term)
 | `(embedded| True) => `(Value.bool true)
 | `(embedded| False) => `(Value.bool false)
 | `(embedded| ( $e )) => toTermSyntax e
+-- Functions
 | `(embedded| fun $x:ident ↦ $body) => do
   let bodyTerm ← withBoundIdentifier x.getId (toTermSyntax body)
   `(Value.lam $bodyTerm)
+| `(embedded| recfun $f:ident $x:ident ↦ $body) => do
+    let bodyTerm ← withBoundIdentifier f.getId (withBoundIdentifier x.getId (toTermSyntax body))
+    `(Value.recfun $bodyTerm)
 | `(embedded| $f $arg) => do
   let fTerm ← toTermSyntax f
   let argTerm ← toTermSyntax arg
@@ -218,16 +246,19 @@ partial def toTermSyntax : Syntax → ElabM (TSyntax `term)
   let c₁Term ← toTermSyntax c₁
   let c₂Term ← withBoundIdentifier (←mkFreshUserName `x) (toTermSyntax c₂)
   `(Computation.bind $c₁Term $c₂Term)
+-- If statement
 | `(embedded| if $v then $c₁ else $c₂) => do
   let vTerm ← toTermSyntax v
   let c₁Term ← toTermSyntax c₁
   let c₂Term ← toTermSyntax c₂
   `(Computation.ite $vTerm $c₁Term $c₂Term)
+-- with _ handle _
 | `(embedded| with $h handle $c) => do
   let hTerm ← toTermSyntax h
   let cTerm ← toTermSyntax c
   `(Computation.handle $hTerm $cTerm)
 | `(embedded| ~$e) => pure e
+-- OpClause definition
 | `(embedded| $t:str ($x, $k) ↦ $e) => do
   let eTerm ← withBoundIdentifier x.getId (withBoundIdentifier k.getId (toTermSyntax e))
   `(OpClause.mk $t $eTerm)
@@ -270,6 +301,37 @@ partial def toTermSyntax : Syntax → ElabM (TSyntax `term)
     do $y ← snd c in
     $c₂)
   toTermSyntax newSyntax.raw
+-- Numbers
+| `(embedded| $n:num) => `(Value.num $n)
+| `(embedded| -$e) => do
+  let eTerm ← toTermSyntax e
+  match eTerm with
+  | `(term| Value.num $n) => `(Value.num (-$n))
+  | _ => pure <| TSyntax.mk Syntax.missing
+| `(embedded| $e₁ + $e₂) => do
+  let e1Term ← toTermSyntax e₁
+  let e2Term ← toTermSyntax e₂
+  `(Computation.add $e1Term $e2Term)
+| `(embedded| $e₁ - $e₂) => do
+  let e1Term ← toTermSyntax e₁
+  let e2Term ← toTermSyntax e₂
+  `(Computation.sub $e1Term $e2Term)
+| `(embedded| max($e1, $e2)) => do
+  let e1Term ← toTermSyntax e1
+  let e2Term ← toTermSyntax e2
+  `(Computation.max $e1Term $e2Term)
+| `(embedded| $e1 < $e2) => do
+  let e1Term ← toTermSyntax e1
+  let e2Term ← toTermSyntax e2
+  `(Computation.lt $e1Term $e2Term)
+| `(embedded| $e1 * $e2) => do
+  let e1Term ← toTermSyntax e1
+  let e2Term ← toTermSyntax e2
+  `(Computation.mul $e1Term $e2Term)
+| `(embedded| $e1 == $e2) => do
+  let e1Term ← toTermSyntax e1
+  let e2Term ← toTermSyntax e2
+  `(Computation.eq $e1Term $e2Term)
 | _ => pure <| TSyntax.mk Syntax.missing
 
 @[term_elab embeddedTerm] def elabEmbedded : TermElab := fun stx _ => do
