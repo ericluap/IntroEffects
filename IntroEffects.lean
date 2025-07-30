@@ -2,6 +2,7 @@
 -- Import modules here that should be built as part of the library.
 import IntroEffects.Eval
 import IntroEffects.Expr
+import IntroEffects.Inference
 import IntroEffects.LocallyNameless
 import IntroEffects.SmallStep
 import IntroEffects.Syntax

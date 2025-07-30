@@ -2,15 +2,11 @@ import IntroEffects.Type
 import IntroEffects.Syntax
 import Batteries.Data.List
 
-inductive PossibleOps where
-| names : List String → PossibleOps
-| mvar : Nat → PossibleOps
-deriving Repr
-
 mutual
 
 /--
   The possible types for a value.
+  This is the same as `ValueTy` but with metavariables.
 -/
 inductive ValueTy' where
 | bool
@@ -20,8 +16,7 @@ inductive ValueTy' where
 deriving Repr, DecidableEq
 
 /--
-  The type of a computation is the type of the value it returns
-  as well as the operations it can possibly call.
+  The type of a computation is the type of the value it returns.
 -/
 structure ComputationTy' where
   returnTy : ValueTy'
@@ -36,7 +31,14 @@ inductive Constraint where
 | valEq (τ τ' : ValueTy') -- `τ ≡ τ'`
 deriving Repr
 
+/--
+  A bound variable has the type of the type it refers to in the context.
+-/
 abbrev Ctx' := List ValueTy'
+/--
+  An operation signature matches the name of the operation
+  to its input type and output type.
+-/
 abbrev OpSignature' := Std.TreeMap String (ValueTy × ValueTy)
 abbrev Constraints := List Constraint
 
@@ -53,17 +55,29 @@ end
 instance : Coe ValueTy ValueTy' where
   coe := valueTyToPrime
 
+/--
+  Track the current number of mvars so that we can create unique ones easily.
+-/
 structure MVarState where
   next : Nat := 0
 deriving Repr
 
+/--
+  Handle errors and create fresh mvars.
+-/
 abbrev MetaM := ExceptT String (StateM MVarState)
 
+/--
+  Create a fresh value type mvar.
+-/
 def freshValueMVar : MetaM ValueTy' := do
   let n ← get <&> (·.next)
   modify (fun s => {next := s.next + 1})
   return (.mvar n)
 
+/--
+  Create a fresh computation type mvar.
+-/
 def freshCompMVar : MetaM ComputationTy' := do
   return ({returnTy := ←freshValueMVar})
 
@@ -170,14 +184,26 @@ def collectHandlerConstraints (σ : OpSignature') (Γ : Ctx') :
   return (.handler ⟨α⟩ τret, Cret ++ newConstraints ++ (opsTypes.map (·.2)).flatten)
 end
 
-def collect (σ : OpSignature') (e : Computation) :
+/--
+  Collect the final type with metavariables
+  and all the constraints on those metavariables.
+-/
+def collectConstraints (σ : OpSignature') (e : Computation) :
     Except String (ComputationTy' × Constraints) :=
   collectCompConstraints σ [] e |>.run' {} |>.run
 
 mutual
+/--
+  Substitute `.mvar n` with the value type `new`
+  anywhere in the computation type.
+-/
 def substMVarComp (n : Nat) (new : ValueTy') : ComputationTy' → ComputationTy'
 | ⟨returnTy⟩ => ⟨substMVarVal n new returnTy⟩
 
+/--
+  Substitute `.mvar n` with the value type `new`
+  anywhere in the value type.
+-/
 def substMVarVal (n : Nat) (new : ValueTy') : ValueTy' → ValueTy'
 | .mvar n' => if n = n' then new else .mvar n'
 | .function input output => .function (substMVarVal n new input) (substMVarComp n new output)
@@ -186,22 +212,37 @@ def substMVarVal (n : Nat) (new : ValueTy') : ValueTy' → ValueTy'
 end
 
 mutual
+/--
+  Check if `.mvar n` appears anywhere in the given value type.
+-/
 def mvarInVal (n : Nat) : ValueTy' → Bool
 | .mvar n' => n == n'
 | .function input output => mvarInVal n input || mvarInComp n output
 | .handler c1 c2 => mvarInComp n c1 || mvarInComp n c2
 | .bool => false
 
+/--
+  Check if `.mvar n` appears anywhere in the given computation type.
+-/
 def mvarInComp (n : Nat) : ComputationTy' → Bool
 | ⟨returnTy⟩ => mvarInVal n returnTy
 end
 
+/--
+  Apply the value type substitution function `f` to the constraint.
+-/
 def Constraint.applySubst (f : ValueTy' → ValueTy') : Constraint → Constraint
 | .valEq τ τ' => .valEq (f τ) (f τ')
 
+/--
+  Apply the value type substitution function `f` to every constraints.
+-/
 def List.applySubst (f : ValueTy' → ValueTy') (c : Constraints) : Constraints :=
   c.map (·.applySubst f)
 
+/--
+  Given a list of constraints, construct a substitution to solve them.
+-/
 def unify : Constraints → Option (ComputationTy' → ComputationTy')
 | [] => some id
 | .valEq τ τ' :: cs => do
@@ -225,14 +266,21 @@ def unify : Constraints → Option (ComputationTy' → ComputationTy')
   none
 partial_fixpoint
 
-def inferCompType (σ : OpSignature) (c : Computation) : Except String ComputationTy' := (do
-  let (type, constraints) ← collectCompConstraints σ {} c
-  if let some substitution := unify constraints then
-    return substitution type
-  else
-    Except.error s!"Failed to unify constraints {repr constraints}")
-  |>.run' {} |>.run
+/--
+  Infer the type of the computation `c` given the operation signature `σ`.
+-/
+def inferCompType (σ : OpSignature) (c : Computation) : Except String ComputationTy' :=
+  match collectConstraints σ c with
+  | .ok (type, constraints) =>
+    if let some substitution := unify constraints then
+      Except.ok (substitution type)
+    else
+      Except.error s!"Failed to unify constraints {repr constraints}"
+  | .error e => .error e
 
+/--
+  Infer the type of the value `v` given the operation signature `σ`.
+-/
 def inferValType (σ : OpSignature) (v : Value) : Except String ValueTy' := (do
   let (type, constraints) ← collectCompConstraints σ {} (Computation.ret v)
   if let some substitution := unify constraints then
@@ -242,82 +290,7 @@ def inferValType (σ : OpSignature) (v : Value) : Except String ValueTy' := (do
   |>.run' {} |>.run
 
 open Input
-#eval inferCompType ∅ {{{
-  (fun x ↦ return x) True
+#eval inferCompType (Std.TreeMap.ofList [("print", (ValueTy.bool, ValueTy.bool))]) {{{
+  with handler {ops := []} handle
+  (fun x ↦ return 1) True
 }}}
-
-/-
-inductive CTHasType (σ : OpSignature) : Ctx → Expr → Ty → List Constraints → Prop where
-/--
- If `(x : A) ∈ Γ` then `Γ ⊢ x : A ▸ ∅`
--/
-| var x A : ((x : A) ∈ Γ) → CTHasType σ Γ (Value.var (.bvar x)) A []
-/--
-  `Γ ⊢ True : bool` and `Γ ⊢ False : bool ▸ ∅` with no const
--/
-| bool b : CTHasType σ Γ (Value.bool b) ValueTy.bool []
-/--
-  If `Γ, x : A ⊢ c : C`, then `Γ ⊢ (fun x => c) : A → C`
--/
-| lam A (c : Computation) (C : ComputationTy) :
-  HasType σ (A :: Γ) c C → HasType σ Γ (Value.lam c) (ValueTy.function A C)
-/--
-  If `Γ, x : A ⊢ cᵣ : B!Δ'`, `(opᵢ : Aᵢ → Bᵢ) ∈ Σ`,
-  `Γ, x : Aᵢ, k : Bᵢ → B!Δ' ⊢ cᵢ : B!Δ'`, and `Δ \ {opᵢ} ⊆ Δ'`,
-  then
-  `Γ ⊢ handler {return x ↦ cr, ops := [op₁(x, k) ↦ c₁, ⋯, opₙ(x, k) ↦ cₙ]} : A!Δ ⇒ B!Δ'`
--/
-| handler (cr : Computation) :
-  HasType σ (A :: Γ) cr (B ! Δ') → -- `Γ, x : A ⊢ cᵣ : B!Δ'`
-  (h: ∀opClause ∈ ops, opClause.op ∈ σ) → -- `(opᵢ : Aᵢ → Bᵢ) ∈ Σ`
-  (∀mem : opClause ∈ ops,
-    let Aᵢ := σ.inputType opClause.op
-    let Bᵢ := σ.outputType opClause.op
-    let k := ValueTy.function Bᵢ (B ! Δ')
-    HasType σ (k :: Aᵢ :: Γ) opClause.body (B ! Δ')
-  ) → -- `Γ, x : Aᵢ, k : Bᵢ → B!Δ' ⊢ cᵢ : B!Δ'`
-  (Δ.removeAll (ops.map (·.op)) ⊆ Δ') → -- `Δ \ {opᵢ} ⊆ Δ'`
-  HasType σ Γ (Value.hdl (Handler.mk cr ops))
-    (ValueTy.handler (A ! Δ) (B ! Δ'))
-| ret (v : Value) Δ (A : ValueTy) : HasType σ Γ v A →
-  HasType σ Γ (Computation.ret v) (A ! Δ)
-/--
-  If `(op : Aop → Bop) ∈ Σ`, `Γ ⊢ v : Aop`, `Γ, y : Bop ⊢ c : A!Δ`, and `op ∈ Δ`
-  then `Γ ⊢ op(v; fun y ↦ c) : A!Δ`
-
--/
-| op (v : Value) (c : Computation) :
-  (h : name ∈ σ) → -- `(op : Aop → Bop) ∈ Σ`
-  HasType σ Γ v (σ.inputType name) → -- `Γ ⊢ v : Aop`
-  HasType σ (σ.outputType name :: Γ) c (A ! Δ) → -- `Γ, y : Bop ⊢ c : A!Δ`
-  (name ∈ Δ) → -- `op ∈ Δ`
-  HasType σ Γ (Computation.opCall name v c) (A ! Δ)
-/--
-  If `Γ ⊢ c₁ : A!Δ` and `Γ, x : A ⊢ c₂ : B!Δ`
-  then `Γ ⊢ do x ← c₁ in c₂ : B!Δ`
--/
-| bind (c₁ c₂ : Computation):
-  HasType σ Γ c₁ (A ! Δ) → HasType σ (A :: Γ) c₂ (B ! Δ) →
-  HasType σ Γ (Computation.bind c₁ c₂) (B ! Δ)
-/--
-  If `Γ ⊢ v₁ : A → C` and `Γ ⊢ v₂ : A`
-  then `Γ ⊢ v₁ v₂ : C`
--/
-| app (v₁ v₂ : Value) :
-  HasType σ Γ v₁ (ValueTy.function A C) → HasType σ Γ v₂ A →
-  HasType σ Γ (Computation.app v₁ v₂) C
-/--
-  If `Γ ⊢ v : bool`, `Γ ⊢ c₁ : C`, and `Γ ⊢ c₂ : C`
-  then `Γ ⊢ if v then c₁ else c₂ : C`
--/
-| ite (v : Value) (c₁ c₂ : Computation) :
-  HasType σ Γ v ValueTy.bool → HasType σ Γ c₁ C → HasType σ Γ c₂ C →
-  HasType σ Γ (Computation.ite v c₁ c₂) C
-/--
-  If `Γ ⊢ v : C ⇒ D` and `Γ : c : C`
-  then `Γ ⊢ with v handle c : D`
--/
-| handle (v : Value) (c : Computation) :
-  HasType σ Γ v (ValueTy.handler C D) → HasType σ Γ c C →
-  HasType σ Γ (Computation.handle v c) D
--/
