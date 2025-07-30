@@ -39,16 +39,13 @@ def evalSingleStep : Computation → Option Computation
 -/
 | .bind (.opCall op v body) c => some <| .opCall op v (.bind body c)
 | .bind c₁ c₂ => (evalSingleStep c₁).map (fun c₁' => .bind c₁' c₂)
-| .handle (.hdl h) (.ret v) =>
-  match h.ret? with
   /- `with h handle (return v) → retBody[v/x]`
 
     Since `retBody` is the return clause of a handler,
     we assume that it has one dangling bvar
     and so we instantiate it with `v` to get the substitution.
 -/
-  | some retBody => some <| instantiateComp v retBody
-  | none => some <| .ret v
+| .handle (.hdl h) (.ret v) => some <| instantiateComp v h.ret
 | .handle (.hdl h) (.opCall op v body) =>
   match h.lookup op with
   /- `with h handle op(v; y.body) → c[v/x, (y ↦ with h handle body)/k]`
@@ -132,7 +129,7 @@ theorem evalSingleStep_sound {c c' : Computation} :
             intro h; rw [←h]
             solve_by_elim)
       | opCall op v cont =>
-        cases hlookup : h.lookup op with
+        cases hlookup : h.lookup op         with
         | some clause =>
           cases clause with
           | mk name ops' =>
@@ -202,9 +199,10 @@ theorem evalSingleStep_iff_step (c c' : Computation) :
 /--
   Evaluate the computation with a maximum number of steps.
 -/
-def evalFuel : Nat → Computation → Option Value
+def evalFuel : Nat → Computation → Option Computation
 | 0, _ => none
-| _+1, .ret v => some v
+| _+1, .ret v => some <| .ret v
+| _+1, .opCall n v c => some <| .opCall n v c
 | n+1, c =>
   match evalSingleStep c with
   | some c' => evalFuel n c'
@@ -213,8 +211,9 @@ def evalFuel : Nat → Computation → Option Value
 /--
   Evaluate the computation (no maximum number of steps)
 -/
-def eval : Computation → Option Value
-| .ret v => some v
+def eval : Computation → Option Computation
+| .ret v => some <| .ret v
+| .opCall n v c => some <| .opCall n v c
 | c =>
   match evalSingleStep c with
   | some c' => eval c'
@@ -225,18 +224,19 @@ partial_fixpoint
   If `evalFuel` reduces `c` to `ret v` within `n` steps,
   then `c ⤳⋆ ret v`.
 -/
-theorem evalFuel_sound  : evalFuel n c = some v → c ⤳⋆ .ret v := by
+theorem evalFuel_sound  : evalFuel n c = some v → c ⤳⋆ v := by
   induction h : n generalizing c with
   | zero => simp [evalFuel]
   | succ n ih =>
     cases hstep : evalSingleStep c with
     | none =>
       cases c <;> try grind [evalFuel]
-      · simp [evalFuel]
-        intro h; rw [←h]; constructor
+      all_goals
+      ( simp [evalFuel]
+        intro h; rw [←h]; constructor)
     | some c' =>
       cases c with
-      | ret v =>
+      | ret | opCall =>
         simp [evalFuel]
         intro h; rw [←h]; constructor
       | _ =>
@@ -248,7 +248,7 @@ theorem evalFuel_sound  : evalFuel n c = some v → c ⤳⋆ .ret v := by
   If there exists an `n` such that `evalFuel` reduces `c` to `v`
   within `n` steps, then `c ⤳⋆ .ret v`.
 -/
-theorem evalFuel_soundExists : (∃n, evalFuel n c = some v) → c ⤳⋆ .ret v := by
+theorem evalFuel_soundExists : (∃n, evalFuel n c = some v) → c ⤳⋆ v := by
   intro h
   obtain ⟨n, hn⟩ := h
   exact evalFuel_sound hn
@@ -261,13 +261,24 @@ theorem evalFuel_step (h : c ⤳ c') : evalFuel (n + 1) c = evalFuel n c' := by
   have := evalSingleStep_complete h
   cases c <;> grind [evalFuel]
 
-theorem evalFuel_complete_aux (h : c ⤳⋆ r) :
-    ∀v, r = .ret v → ∃n, evalFuel n c = some v := by
+theorem evalFuelRet_complete_aux (h : c ⤳⋆ r) :
+    ∀v, r= .ret v → ∃n, evalFuel n c = some (.ret v) := by
   induction h with
   | refl c' =>
     intro v hv
-    cases hv
-    exact ⟨1, by simp [evalFuel]⟩
+    exact ⟨1, by grind [evalFuel]⟩
+  | @trans c1 c2 c3 hStep hTail ih =>
+    intro v hv
+    obtain ⟨n, ihFuel⟩ := ih v hv
+    refine ⟨n+1, ?_⟩
+    simp [evalFuel_step hStep, ihFuel]
+
+theorem evalFuelOpCall_complete_aux (h : c ⤳⋆ r) :
+    ∀v, r = .opCall name v comp → ∃n, evalFuel n c = some (.opCall name v comp) := by
+  induction h with
+  | refl c' =>
+    intro v hv
+    exact ⟨1, by grind [evalFuel]⟩
   | @trans c1 c2 c3 hStep hTail ih =>
     intro v hv
     obtain ⟨n, ihFuel⟩ := ih v hv
@@ -276,19 +287,35 @@ theorem evalFuel_complete_aux (h : c ⤳⋆ r) :
 
 /--
   If `c ⤳⋆ .ret v`, then for some `n`,
-  `evalFual` reduces `c` to `v` within `n` steps.
+  `evalFuel` reduces `c` to `.ret v` within `n` steps.
 -/
-theorem evalFuel_complete (h : c ⤳⋆ .ret v) :
-    ∃n, evalFuel n c = some v := evalFuel_complete_aux h v rfl
+theorem evalFuelRet_complete (h : c ⤳⋆ .ret v) :
+  ∃n, evalFuel n c = some (.ret v) := evalFuelRet_complete_aux h v rfl
+
+/--
+  If `c ⤳⋆ .opCall name v c`, then for some `n`,
+  `evalFuel` reduces `c` to `.opCall name v c` within `n` steps.
+-/
+theorem evalFuelOpCall_complete (h : c ⤳⋆ .opCall name v comp) :
+  ∃n, evalFuel n c = some (.opCall name v comp) := evalFuelOpCall_complete_aux h v rfl
 
 /--
   There exists an `n` such that `evalFuel` reduces
-  `c` to `v` within `n` steps if and only if
+  `c` to `.ret v` within `n` steps if and only if
   `c ⤳⋆ .ret v`.
 -/
-theorem evalFuel_iff_stepStar :
-    (∃n, evalFuel n c = some v) ↔ c ⤳⋆ .ret v :=
-  ⟨evalFuel_soundExists, evalFuel_complete⟩
+theorem evalFuelRet_iff_stepStarRet :
+    (∃n, evalFuel n c = some (.ret v)) ↔ c ⤳⋆ .ret v :=
+  ⟨evalFuel_soundExists, evalFuelRet_complete⟩
+
+/--
+  There exists an `n` such that `evalFuel` reduces
+  `c` to `.opCall name v comp` within `n` steps if and only if
+  `c ⤳⋆ .opCall name v comp`.
+-/
+theorem evalFuelOpCall_iff_stepStarOpCall :
+    (∃n, evalFuel n c = some (.opCall name v comp)) ↔ c ⤳⋆ .opCall name v comp :=
+  ⟨evalFuel_soundExists, evalFuelOpCall_complete⟩
 
 /--
   If `evalFuel` reduces `c` to `v` within `n` steps,
@@ -308,7 +335,7 @@ theorem evalFuel_to_eval :
       intro hFuel
       have : evalFuel n c' = some v := by
         cases c <;> try simpa [evalFuel, hstep] using hFuel
-        · simp [evalSingleStep] at hstep
+        all_goals simp [evalSingleStep] at hstep
       have : eval c' = some v := ih this
       cases c <;> grind [evalFuel, eval]
 
@@ -330,9 +357,10 @@ attribute [elab_as_elim] eval.partial_correctness
 theorem eval_to_evalFuelExists :
     eval c = some v → (∃n, evalFuel n c = some v) := by
   intro h
-  refine eval.partial_correctness _ ?_ c  v h
+  refine eval.partial_correctness _ ?_ c v h
   · intro eval' ih c' v' h'
     split at h'
+    next => exists 1
     next => exists 1
     split at h'
     next h'' =>
@@ -352,14 +380,23 @@ theorem eval_iff_evalFuel :
   · exact fun a => evalFuelExists_to_eval a
 
 /--
-  `eval` reduces `c` to `v` if and only if
+  `eval` reduces `c` to `.ret v` if and only if
   `c ⤳⋆ .ret v`
 -/
-theorem eval_iff_stepStar :
-    eval c = some v ↔ c ⤳⋆ .ret v :=
-  eval_iff_evalFuel.trans evalFuel_iff_stepStar
+theorem evalRet_iff_stepStarRet :
+    eval c = some (.ret v) ↔ c ⤳⋆ .ret v :=
+  eval_iff_evalFuel.trans evalFuelRet_iff_stepStarRet
 
-def evalLang (c : Computation) : Value := (eval c).getD (.var (.fvar "Error"))
+/--
+  `eval` reduces `c` to `.opCall n v c` if and only if
+  `c ⤳⋆ .opCall n v c`
+-/
+theorem evalOpCall_iff_stepStarOpCall :
+    eval c = some (.opCall n v c) ↔ c ⤳⋆ .opCall n v c :=
+  eval_iff_evalFuel.trans evalFuelOpCall_iff_stepStarOpCall
+
+
+def evalLang (c : Computation) : Computation := (eval c).getD (.ret (.var (.fvar "Error")))
 
 macro "#evalLang " e:term : command =>
   `(#eval (evalLang $e))

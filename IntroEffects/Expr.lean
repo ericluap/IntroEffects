@@ -79,7 +79,6 @@ inductive Computation where
 | eq : Value → Value → Computation
 deriving BEq
 
-
 structure OpClause where
   op : Name
   /-- Assumes that the body has two dangling bvars. -/
@@ -88,8 +87,8 @@ deriving Repr, BEq
 
 structure Handler where
   /-- Assumes that the computation has one dangling bvar. -/
-  ret? : Option Computation
-  ops  : List OpClause
+  ret : Computation
+  ops : List OpClause
 deriving Repr, BEq
 
 end

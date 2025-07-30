@@ -66,10 +66,8 @@ termination_by l => sizeOf l
   with a dangling bound variable pointing at `level`.
 -/
 def abstractHandlerLvl (me : Name) (level : Nat) : Handler → Handler
-| ⟨some ret, ops'⟩ =>
-    ⟨some (abstractComputationLvl me (level+1) ret), abstractOps me level ops'⟩
-| ⟨none, ops'⟩ =>
-  ⟨none, abstractOps me level ops'⟩
+| ⟨ret, ops'⟩ =>
+    ⟨abstractComputationLvl me (level+1) ret, abstractOps me level ops'⟩
 termination_by h => sizeOf h
 decreasing_by
   all_goals simp
@@ -139,10 +137,8 @@ termination_by l => sizeOf l
   with the value `what
 -/
 def instantiateHandlerLvl (what : Value) (level : Nat) : Handler → Handler
-| ⟨some ret, ops'⟩ =>
-    ⟨some (instantiateComputationLvl what (level+1) ret), instantiateOps what level ops'⟩
-| ⟨none, ops'⟩ =>
-  ⟨none, instantiateOps what level ops'⟩
+| ⟨ret, ops'⟩ =>
+    ⟨instantiateComputationLvl what (level+1) ret, instantiateOps what level ops'⟩
 termination_by h => sizeOf h
 decreasing_by
   all_goals simp

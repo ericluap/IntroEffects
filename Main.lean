@@ -13,12 +13,23 @@ def printFullName := {{{
   join(forename, surname)
 }}}
 
+-- You can view the term without any syntax sugar
+/--
+info: do x0 ← print⟨"What is your forename?"; fun x0 ↦ return x0⟩ in
+ do x1 ← read⟨(); fun x1 ↦ return x1⟩ in
+ do x2 ← print⟨"What is your surname?"; fun x2 ↦ return x2⟩ in
+ do x3 ← read⟨(); fun x3 ↦ return x3⟩ in
+ join(x1, x3)
+-/
+#guard_msgs in
+#eval printFullName
+
 def alwaysRead := {{{
   fun s ↦ (return handler {ops := ["read"(x,k) ↦ k s, "print"(x,k) ↦ k ()]})
 }}}
 
 /--
-info: "Bob Bob"
+info: return "Bob Bob"
 -/
 #guard_msgs in
 #evalLang {{{
@@ -59,7 +70,7 @@ def collect := {{{
 }}}
 
 /--
-info: ((), "A B C")
+info: return ((), "A B C")
 -/
 #guard_msgs in
 #evalLang {{{
@@ -73,7 +84,7 @@ def reverse := {{{
 }}}
 
 /--
-info: ((), "C B A")
+info: return ((), "C B A")
 -/
 #guard_msgs in
 #evalLang {{{
@@ -95,7 +106,7 @@ def collect' := {{{
 }}}
 
 /--
-info: ((), "A B C")
+info: return ((), "A B C")
 -/
 #guard_msgs in
 #evalLang {{{
@@ -120,7 +131,7 @@ def chooseDiff := {{{
 }}}
 
 /--
-info: 10
+info: return 10
 -/
 #guard_msgs in
 #evalLang {{{
@@ -136,7 +147,7 @@ def pickMax := {{{
 }}}
 
 /--
-info: 25
+info: return 25
 -/
 #guard_msgs in
 #evalLang {{{
@@ -208,11 +219,16 @@ def backtrack := {{{
 }}}
 
 /--
-info: (5, (12, 13))
+info: return (5, (12, 13))
 -/
 #guard_msgs in
 #evalLang {{{
   with ~backtrack handle ~pythagorean pair(4,15)
+}}}
+
+-- Returns the unhandled `fail` operation
+#evalLang {{{
+  with ~backtrack handle ~pythagorean pair(10,15)
 }}}
 
 def main : IO Unit :=
@@ -228,7 +244,7 @@ def main : IO Unit :=
   IO.println hello_world
 
 /--
-info: "Hello, world!"
+info: return "Hello, world!"
 -/
 #guard_msgs in
 #eval main

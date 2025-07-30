@@ -16,21 +16,21 @@ open Lean.Parser (maxPrec minPrec argPrec)
 /--
   Track the names of the bvars
 -/
-structure Ctx where
+structure BoundCtx where
   bound : List String
 
-def Ctx.addBvar (ctx : Ctx) (name : String) : Ctx := ⟨name :: ctx.bound⟩
+def BoundCtx.addBvar (ctx : BoundCtx) (name : String) : BoundCtx := ⟨name :: ctx.bound⟩
 
-def Ctx.lookup (ctx : Ctx) (bvar : Nat) : String :=
+def BoundCtx.lookup (ctx : BoundCtx) (bvar : Nat) : String :=
   ctx.bound[bvar]?.getD (toString bvar)
 
-def Ctx.getNewName (ctx : Ctx) : String := "x" ++ toString ctx.bound.length
+def BoundCtx.getNewName (ctx : BoundCtx) : String := "x" ++ toString ctx.bound.length
 
 /-
   Improve the formatting of the output
 -/
 mutual
-def Value.format (prec : Nat) (ctx : Ctx): Value → Format
+def Value.format (prec : Nat) (ctx : BoundCtx): Value → Format
 | .var (.bvar n) => .group <| ctx.lookup n
 | .var (.fvar n) => n
 | .bool true => "True"
@@ -49,7 +49,7 @@ def Value.format (prec : Nat) (ctx : Ctx): Value → Format
   .group <| "recfun " ++ name1 ++ " " ++ name2 ++ " ↦ " ++ .nest 2 (.line ++ c.format prec newCtx)
 | .hdl h => h.format prec ctx
 
-def Computation.format (prec : Nat) (ctx : Ctx) : Computation → Format
+def Computation.format (prec : Nat) (ctx : BoundCtx) : Computation → Format
 | .ret v => .group <| "return " ++ v.format prec ctx
 | .handle h c => .group <| "with " ++ h.format prec ctx ++ " handle" ++ .line ++ .nest 2 (c.format prec ctx)
 | .app v₁ v₂ => .group <| v₁.format prec ctx ++ " " ++ v₂.format prec ctx
@@ -60,8 +60,8 @@ def Computation.format (prec : Nat) (ctx : Ctx) : Computation → Format
   .group <| "do " ++ name ++ " ← " ++ c₁.format prec ctx ++ " in " ++ .line ++ c₂.format prec (ctx.addBvar name)
 | .opCall name v c =>
   let newName := ctx.getNewName
-  .group <| name ++ "(" ++ v.format prec ctx ++ "; fun " ++ newName ++ " ↦ " ++ c.format prec (ctx.addBvar newName) ++ ")"
-| .join v₁ v₂ => .group <| v₁.format prec ctx ++ " ++ " ++ v₂.format prec ctx
+  .group <| name ++ "⟨" ++ v.format prec ctx ++ "; fun " ++ newName ++ " ↦ " ++ c.format prec (ctx.addBvar newName) ++ "⟩"
+| .join v₁ v₂ => .group <| "join(" ++ v₁.format prec ctx ++ ", " ++ v₂.format prec ctx ++ ")"
 | .fst v => .group <| "fst " ++ v.format prec ctx
 | .snd v => .group <| "snd " ++ v.format prec ctx
 | .add v₁ v₂ => .group <| v₁.format prec ctx ++ " + " ++ v₂.format prec ctx
@@ -71,18 +71,16 @@ def Computation.format (prec : Nat) (ctx : Ctx) : Computation → Format
 | .mul v₁ v₂ => .group <| v₁.format prec ctx ++ " * " ++ v₂.format prec ctx
 | .eq v₁ v₂ => .group <| v₁.format prec ctx ++ " == " ++ v₂.format prec ctx
 
-def OpClause.format (prec : Nat) (ctx : Ctx) : OpClause → Format
+def OpClause.format (prec : Nat) (ctx : BoundCtx) : OpClause → Format
 | ⟨op, body⟩ =>
   let name1 := ctx.getNewName
   let name2 := (ctx.addBvar name1).getNewName
   let opsCtx := (ctx.addBvar name1).addBvar name2
   .group <| "{" ++ op ++ "(" ++ name1 ++ ", " ++ name2 ++ ") ↦ " ++ .line ++ body.format prec opsCtx ++ "}"
-def Handler.format (prec : Nat) (ctx : Ctx) : Handler → Format
-| ⟨ret?, ops⟩ =>
+def Handler.format (prec : Nat) (ctx : BoundCtx) : Handler → Format
+| ⟨ret, ops⟩ =>
   let name := ctx.getNewName
-  let retStr := match ret? with
-  | none => "none"
-  | some ret => "return " ++ name ++ " ↦ " ++ ret.format prec (ctx.addBvar name)
+  let retStr := "return " ++ name ++ " ↦ " ++ ret.format prec (ctx.addBvar name)
   .group <| "{" ++ retStr ++ ", " ++ .line ++ "ops := [" ++
     .joinSep (ops.map (·.format prec ctx)) (", " ++ .line) ++ "]}"
 where
@@ -267,10 +265,10 @@ partial def toTermSyntax : Syntax → ElabM (TSyntax `term)
   let eTerm ← withBoundIdentifier x.getId (toTermSyntax e)
   -- Each is assumed to have two dangling bvars
   let opsTerms ← xs.getElems.mapM (toTermSyntax ·)
-  `(Value.hdl (Handler.mk (some $eTerm) [$opsTerms,*]))
+  `(Value.hdl (Handler.mk $eTerm [$opsTerms,*]))
 | `(embedded| handler {ops := [$xs,*] }) => do
     let opsTerms ← xs.getElems.mapM (toTermSyntax ·)
-    `(Value.hdl (Handler.mk none [$opsTerms,*]))
+    `(Value.hdl (Handler.mk (Computation.ret (Value.var (Var.bvar 0))) [$opsTerms,*]))
 -- str
 | `(embedded| str $s:str) => `(Value.string $s)
 -- join
