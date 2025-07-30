@@ -5,6 +5,7 @@ import Batteries.Data.List
 inductive PossibleOps where
 | names : List String → PossibleOps
 | mvar : Nat → PossibleOps
+deriving Repr
 
 mutual
 
@@ -16,6 +17,7 @@ inductive ValueTy' where
 | function : ValueTy' → ComputationTy' → ValueTy'
 | handler : ComputationTy' → ComputationTy' → ValueTy'
 | mvar : Nat → ValueTy'
+deriving Repr, DecidableEq
 
 /--
   The type of a computation is the type of the value it returns
@@ -23,7 +25,7 @@ inductive ValueTy' where
 -/
 structure ComputationTy' where
   returnTy : ValueTy'
-  Δ : List String
+deriving Repr, DecidableEq
 end
 
 /--
@@ -32,16 +34,28 @@ end
 -/
 inductive Constraint where
 | valEq (τ τ' : ValueTy') -- `τ ≡ τ'`
---| possibleOpsEq (p p' : PossibleOps)
-| compEq (c c' : ComputationTy')
---| hasOp (p : PossibleOps) (op : String)
+deriving Repr
 
 abbrev Ctx' := List ValueTy'
-abbrev OpSignature' := Std.TreeMap String (ValueTy' × ValueTy')
+abbrev OpSignature' := Std.TreeMap String (ValueTy × ValueTy)
 abbrev Constraints := List Constraint
+
+mutual
+def valueTyToPrime : ValueTy → ValueTy'
+| .bool => .bool
+| .handler c1 c2 => .handler (compTyToPrime c1) (compTyToPrime c2)
+| .function v c => .function (valueTyToPrime v) (compTyToPrime c)
+
+def compTyToPrime : ComputationTy → ComputationTy'
+| ⟨returnTy, _⟩ => ⟨valueTyToPrime returnTy⟩
+end
+
+instance : Coe ValueTy ValueTy' where
+  coe := valueTyToPrime
 
 structure MVarState where
   next : Nat := 0
+deriving Repr
 
 abbrev MetaM := ExceptT String (StateM MVarState)
 
@@ -50,13 +64,15 @@ def freshValueMVar : MetaM ValueTy' := do
   modify (fun s => {next := s.next + 1})
   return (.mvar n)
 
---def fresh
-
 def freshCompMVar : MetaM ComputationTy' := do
-  return ({returnTy := ←freshValueMVar, Δ := []})
+  return ({returnTy := ←freshValueMVar})
 
+/-
+  Return the type with metavariables along with
+  constraints on those metavariables.
+-/
 mutual
-partial def collectValConstraints (σ : OpSignature') (Γ : Ctx') :
+def collectValConstraints (σ : OpSignature') (Γ : Ctx') :
     Value → MetaM (ValueTy' × Constraints)
 | .var (.bvar i) =>
   match Γ[i]? with
@@ -81,11 +97,11 @@ partial def collectValConstraints (σ : OpSignature') (Γ : Ctx') :
   let (τb, Cb) ← collectValConstraints σ Γ b
   return (.pair τa τb, Ca ++ Cb)-/
 
-partial def collectCompConstraints (σ : OpSignature') (Γ : Ctx') :
+def collectCompConstraints (σ : OpSignature') (Γ : Ctx') :
     Computation → MetaM (ComputationTy' × Constraints)
 | .ret v => do
   let (τ, C) ← collectValConstraints σ Γ v
-  return (.mk τ [], C)
+  return (.mk τ, C)
 | .opCall name v cont => do
   let some (Aop, Bop) := (σ.get? name) | Except.error s!"Unknown op {name}"
   let (τ_v, C_v) ← collectValConstraints σ Γ v
@@ -98,16 +114,15 @@ partial def collectCompConstraints (σ : OpSignature') (Γ : Ctx') :
     .valEq τ_v Aop, -- `Γ ⊢ v : Aop`
     .valEq y Bop, -- `Γ ⊢ y : Bop`
   ]
-  return ({returnTy := τ_cont.returnTy, Δ := τ_cont.Δ.insert name},
-    newConstraints ++ C_v ++ C_cont)
+  return ({returnTy := τ_cont.returnTy}, newConstraints ++ C_v ++ C_cont)
 | .bind c1 c2 => do
-  let (τ_c1, C_c1) ← collectCompConstraints σ Γ c1
+  let (_τ_c1, C_c1) ← collectCompConstraints σ Γ c1
 
   -- `c2` has one dangling bvar
   let α ← freshValueMVar
   let (τ_c2, C_c2) ← collectCompConstraints σ (α :: Γ) c2
 
-  return ({returnTy := τ_c2.returnTy, Δ := τ_c1.Δ ∪ τ_c2.Δ}, C_c1 ++ C_c2)
+  return ({returnTy := τ_c2.returnTy}, C_c1 ++ C_c2)
 | .app v1 v2 => do
   let (τ1, C1) ← collectValConstraints σ Γ v1
   let (τ2, C2) ← collectValConstraints σ Γ v2
@@ -122,40 +137,114 @@ partial def collectCompConstraints (σ : OpSignature') (Γ : Ctx') :
     .valEq τb .bool,
     .valEq τ1.returnTy τ2.returnTy
   ]
-  return ({returnTy := τ1.returnTy, Δ := τ1.Δ ∪ τ2.Δ},
+  return ({returnTy := τ1.returnTy},
     newConstraints ++ C1 ++ C2 ++ Cb)
 | .handle h c => do
   let (.handler startType endType, Ch) ← collectValConstraints σ Γ h
     | Except.error s!"Expected a handler but was given {h}"
   let (τc, Cc) ← collectCompConstraints σ Γ c
-  let newConstraints : Constraints := [.compEq startType τc]
+  let newConstraints : Constraints := [.valEq startType.returnTy τc.returnTy]
   return (endType, newConstraints ++ Ch ++ Cc)
 | c => Except.error s!"Unsupported computation {c}"
 
-partial def collectOpClauseConstraints (σ : OpSignature') (Γ : Ctx') :
+def collectOpClauseConstraints (σ : OpSignature') (Γ : Ctx') :
     OpClause → MetaM (ComputationTy' × Constraints)
 | ⟨op, body⟩ => do
   let some (Aop, Bop) := (σ.get? op) | Except.error s!"Unknown op {op}"
 
   -- `body` has two dangling bvars
   let α ← freshValueMVar
-  let β ← freshValueMVar
-  let (τ_body, C_body) ← collectCompConstraints σ (α :: β :: Γ) body
+  let (τ_body, C_body) ← collectCompConstraints σ (α :: Aop :: Γ) body
 
-  let newConstraints := [
-    .valEq α (.function )
-  ]
-  return ()
+  let newConstraints : Constraints := [.valEq α (.function Bop τ_body)]
+  return (τ_body, newConstraints ++ C_body)
 
-partial def collectHandlerConstraints (σ : OpSignature') (Γ : Ctx') :
+def collectHandlerConstraints (σ : OpSignature') (Γ : Ctx') :
     Handler → MetaM (ValueTy' × Constraints)
 | ⟨ret, ops⟩ => do
   -- `ret` has one dangling bvar
   let α ← freshValueMVar
   let (τret, Cret) ← collectCompConstraints σ (α :: Γ) ret
   let opsTypes ← ops.mapM (collectOpClauseConstraints σ Γ ·)
-  return ()
+  let newConstraints : Constraints := opsTypes.map (.valEq ·.1.returnTy τret.returnTy)
+  return (.handler ⟨α⟩ τret, Cret ++ newConstraints ++ (opsTypes.map (·.2)).flatten)
 end
+
+def collect (σ : OpSignature') (e : Computation) :
+    Except String (ComputationTy' × Constraints) :=
+  collectCompConstraints σ [] e |>.run' {} |>.run
+
+mutual
+def substMVarComp (n : Nat) (new : ValueTy') : ComputationTy' → ComputationTy'
+| ⟨returnTy⟩ => ⟨substMVarVal n new returnTy⟩
+
+def substMVarVal (n : Nat) (new : ValueTy') : ValueTy' → ValueTy'
+| .mvar n' => if n = n' then new else .mvar n'
+| .function input output => .function (substMVarVal n new input) (substMVarComp n new output)
+| .handler c1 c2 => .handler (substMVarComp n new c1) (substMVarComp n new c2)
+| .bool => .bool
+end
+
+mutual
+def mvarInVal (n : Nat) : ValueTy' → Bool
+| .mvar n' => n == n'
+| .function input output => mvarInVal n input || mvarInComp n output
+| .handler c1 c2 => mvarInComp n c1 || mvarInComp n c2
+| .bool => false
+
+def mvarInComp (n : Nat) : ComputationTy' → Bool
+| ⟨returnTy⟩ => mvarInVal n returnTy
+end
+
+def Constraint.applySubst (f : ValueTy' → ValueTy') : Constraint → Constraint
+| .valEq τ τ' => .valEq (f τ) (f τ')
+
+def List.applySubst (f : ValueTy' → ValueTy') (c : Constraints) : Constraints :=
+  c.map (·.applySubst f)
+
+def unify : Constraints → Option (ComputationTy' → ComputationTy')
+| [] => some id
+| .valEq τ τ' :: cs => do
+  if τ = τ' then
+    return ←unify cs
+  else if let .mvar n := τ then
+    if ¬mvarInVal n τ' then
+      let compSub := substMVarComp n τ'
+      let valSub := substMVarVal n τ'
+      let unifySubCs ← unify (cs.applySubst valSub)
+      return unifySubCs ∘ compSub
+  else if let .mvar n := τ' then
+    if ¬mvarInVal n τ then
+      let compSub := substMVarComp n τ
+      let valSub := substMVarVal n τ
+      let unifySubCs ← unify (cs.applySubst valSub)
+      return unifySubCs ∘ compSub
+  else if let .function τ₀ τ₁ := τ then
+    if let .function τ₀' τ₁' := τ' then
+      return ← unify (.valEq τ₀ τ₀' :: .valEq (τ₁.returnTy) (τ₁'.returnTy) :: cs)
+  none
+partial_fixpoint
+
+def inferCompType (σ : OpSignature) (c : Computation) : Except String ComputationTy' := (do
+  let (type, constraints) ← collectCompConstraints σ {} c
+  if let some substitution := unify constraints then
+    return substitution type
+  else
+    Except.error s!"Failed to unify constraints {repr constraints}")
+  |>.run' {} |>.run
+
+def inferValType (σ : OpSignature) (v : Value) : Except String ValueTy' := (do
+  let (type, constraints) ← collectCompConstraints σ {} (Computation.ret v)
+  if let some substitution := unify constraints then
+    return (substitution type).returnTy
+  else
+    Except.error s!"Failed to unify constraints {repr constraints}")
+  |>.run' {} |>.run
+
+open Input
+#eval inferCompType ∅ {{{
+  (fun x ↦ return x) True
+}}}
 
 /-
 inductive CTHasType (σ : OpSignature) : Ctx → Expr → Ty → List Constraints → Prop where
