@@ -7,9 +7,11 @@ mutual
   The possible types for a value.
 -/
 inductive ValueTy where
-| bool
+| bool | string | num | void | unit
+| pair : ValueTy → ValueTy → ValueTy
 | function : ValueTy → ComputationTy → ValueTy
 | handler : ComputationTy → ComputationTy → ValueTy
+deriving DecidableEq, Repr
 
 /--
   The type of a computation is the type of the value it returns
@@ -17,6 +19,7 @@ inductive ValueTy where
 -/
 inductive ComputationTy where
 | mk (returnTy : ValueTy) (Δ : List String)
+deriving DecidableEq, Repr
 end
 
 notation A "!" Δ => ComputationTy.mk A Δ

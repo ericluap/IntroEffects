@@ -9,11 +9,12 @@ mutual
   This is the same as `ValueTy` but with metavariables.
 -/
 inductive ValueTy' where
-| bool
+| bool | string | num | unit | void
+| pair : ValueTy' → ValueTy' → ValueTy'
 | function : ValueTy' → ComputationTy' → ValueTy'
 | handler : ComputationTy' → ComputationTy' → ValueTy'
 | mvar : Nat → ValueTy'
-deriving Repr, DecidableEq
+deriving Repr, DecidableEq, Inhabited
 
 /--
   The type of a computation is the type of the value it returns.
@@ -23,13 +24,35 @@ structure ComputationTy' where
 deriving Repr, DecidableEq
 end
 
+mutual
+/--
+  Check if `.mvar n` appears anywhere in the given value type.
+-/
+def mvarInVal (n : Nat) : ValueTy' → Bool
+| .mvar n' => n == n'
+| .function input output => mvarInVal n input || mvarInComp n output
+| .handler c1 c2 => mvarInComp n c1 || mvarInComp n c2
+| .pair v1 v2 => mvarInVal n v1 || mvarInVal n v2
+| .bool => false
+| .unit => false
+| .string => false
+| .num => false
+| .void => false
+
+/--
+  Check if `.mvar n` appears anywhere in the given computation type.
+-/
+def mvarInComp (n : Nat) : ComputationTy' → Bool
+| ⟨returnTy⟩ => mvarInVal n returnTy
+end
+
 /--
   A constraint says that two types must be equal.
   This constrains what actual types a metavariable couuld have.
 -/
 inductive Constraint where
 | valEq (τ τ' : ValueTy') -- `τ ≡ τ'`
-deriving Repr
+deriving Repr, Inhabited
 
 /--
   A bound variable has the type of the type it refers to in the context.
@@ -44,13 +67,18 @@ abbrev Constraints := List Constraint
 
 mutual
 def valueTyToPrime : ValueTy → ValueTy'
-| .bool => .bool
+| .bool => .bool | .unit => .unit | .num => .num | .string => .string | .void => .void
+| .pair v1 v2 => .pair (valueTyToPrime v1) (valueTyToPrime v2)
 | .handler c1 c2 => .handler (compTyToPrime c1) (compTyToPrime c2)
 | .function v c => .function (valueTyToPrime v) (compTyToPrime c)
 
 def compTyToPrime : ComputationTy → ComputationTy'
 | ⟨returnTy, _⟩ => ⟨valueTyToPrime returnTy⟩
 end
+
+def mvarInConstraint (n : Nat) : Constraint → Bool
+| .valEq v1 v2 => mvarInVal n v1 || mvarInVal n v2
+def mvarInConstraints (n : Nat) (cs : Constraints) := cs.any (mvarInConstraint n ·)
 
 instance : Coe ValueTy ValueTy' where
   coe := valueTyToPrime
@@ -99,17 +127,21 @@ def collectValConstraints (σ : OpSignature') (Γ : Ctx') :
   let α ← freshValueMVar
   let (k, C) ← collectCompConstraints σ (α :: Γ) body
   return (.function α k, C)
-| v => Except.error s!"Unsupported value {v}"
-/-
 | .recfun body => do
+  -- Since `body` has two dangling bvars
   let α ← freshValueMVar
   let β ← freshValueMVar
-  let (k, C) ← collectCompConstraints (α :: β :: Γ) body
-  return (.function α k, C)
-| .pair a b => do
-  let (τa, Ca) ← collectValConstraints σ Γ a
-  let (τb, Cb) ← collectValConstraints σ Γ b
-  return (.pair τa τb, Ca ++ Cb)-/
+  let (k, C) ← collectCompConstraints σ (α :: β :: Γ) body
+  let newConstraints : Constraints := [.valEq β (.function α k)]
+  return (.function α k, newConstraints ++ C)
+| .pair v1 v2 => do
+  let (τ1, C1) ← collectValConstraints σ Γ v1
+  let (τ2, C2) ← collectValConstraints σ Γ v2
+  return (.pair τ1 τ2, C1 ++ C2)
+| .string _ => pure (.string, [])
+| .num _ => pure (.num, [])
+| .unit => pure (.unit, [])
+| .var (.fvar n) => Except.error s!"Free variable {n}"
 
 def collectCompConstraints (σ : OpSignature') (Γ : Ctx') :
     Computation → MetaM (ComputationTy' × Constraints)
@@ -130,13 +162,15 @@ def collectCompConstraints (σ : OpSignature') (Γ : Ctx') :
   ]
   return ({returnTy := τ_cont.returnTy}, newConstraints ++ C_v ++ C_cont)
 | .bind c1 c2 => do
-  let (_τ_c1, C_c1) ← collectCompConstraints σ Γ c1
+  let (τ_c1, C_c1) ← collectCompConstraints σ Γ c1
 
   -- `c2` has one dangling bvar
   let α ← freshValueMVar
   let (τ_c2, C_c2) ← collectCompConstraints σ (α :: Γ) c2
 
-  return ({returnTy := τ_c2.returnTy}, C_c1 ++ C_c2)
+  let newConstraints : Constraints := [.valEq α τ_c1.returnTy]
+
+  return ({returnTy := τ_c2.returnTy}, newConstraints ++ C_c1 ++ C_c2)
 | .app v1 v2 => do
   let (τ1, C1) ← collectValConstraints σ Γ v1
   let (τ2, C2) ← collectValConstraints σ Γ v2
@@ -159,7 +193,48 @@ def collectCompConstraints (σ : OpSignature') (Γ : Ctx') :
   let (τc, Cc) ← collectCompConstraints σ Γ c
   let newConstraints : Constraints := [.valEq startType.returnTy τc.returnTy]
   return (endType, newConstraints ++ Ch ++ Cc)
-| c => Except.error s!"Unsupported computation {c}"
+| .join v1 v2 => do
+  let (τ1, C1) ← collectValConstraints σ Γ v1
+  let (τ2, C2) ← collectValConstraints σ Γ v2
+  let newConstraints : Constraints := [
+    .valEq τ1 .string,
+    .valEq τ2 .string,
+  ]
+  return ({returnTy := .string}, newConstraints ++ C1 ++ C2)
+| .fst v => do
+  -- We may not know the types in the pair yet
+  let α ← freshValueMVar
+  let β ← freshValueMVar
+  let (τ, C) ← collectValConstraints σ Γ v
+  let newConstraints : Constraints := [.valEq τ (.pair α β)]
+  return ({returnTy := α}, newConstraints ++ C)
+| .snd v => do
+  -- We may not know the types in the pair yet
+  let α ← freshValueMVar
+  let β ← freshValueMVar
+  let (τ, C) ← collectValConstraints σ Γ v
+  let newConstraints : Constraints := [.valEq τ (.pair α β)]
+  return ({returnTy := β}, newConstraints ++ C)
+| .add v1 v2 | .sub v1 v2 | .mul v1 v2 | .max v1 v2 => do
+  let (τ1, C1) ← collectValConstraints σ Γ v1
+  let (τ2, C2) ← collectValConstraints σ Γ v2
+  let newConstraints : Constraints := [
+    .valEq τ1 .num,
+    .valEq τ2 .num
+  ]
+  return ({returnTy := .num}, newConstraints ++ C1 ++ C2)
+| .lt v1 v2 => do
+  let (τ1, C1) ← collectValConstraints σ Γ v1
+  let (τ2, C2) ← collectValConstraints σ Γ v2
+  let newConstraints : Constraints := [
+    .valEq τ1 .num,
+    .valEq τ2 .num
+  ]
+  return ({returnTy := .bool}, newConstraints ++ C1 ++ C2)
+| .eq v1 v2 => do
+  let (_, C1) ← collectValConstraints σ Γ v1
+  let (_, C2) ← collectValConstraints σ Γ v2
+  return ({returnTy := .bool}, C1 ++ C2)
 
 def collectOpClauseConstraints (σ : OpSignature') (Γ : Ctx') :
     OpClause → MetaM (ComputationTy' × Constraints)
@@ -169,6 +244,17 @@ def collectOpClauseConstraints (σ : OpSignature') (Γ : Ctx') :
   -- `body` has two dangling bvars
   let α ← freshValueMVar
   let (τ_body, C_body) ← collectCompConstraints σ (α :: Aop :: Γ) body
+
+  -- The only place `void` can be introduced is in the op signature
+  -- We make sure it is used correctly.
+  if Aop = .void then
+    Except.error s!"Operation {op} has input type void."
+  if Bop = .void then
+    match α with
+    | .mvar n =>
+      if mvarInComp n τ_body || mvarInConstraints n C_body then
+        Except.error s!"Operation {op} has return type void but uses its continuation."
+    | _ => Except.error "Created mvar is not an mvar??"
 
   let newConstraints : Constraints := [.valEq α (.function Bop τ_body)]
   return (τ_body, newConstraints ++ C_body)
@@ -208,24 +294,12 @@ def substMVarVal (n : Nat) (new : ValueTy') : ValueTy' → ValueTy'
 | .mvar n' => if n = n' then new else .mvar n'
 | .function input output => .function (substMVarVal n new input) (substMVarComp n new output)
 | .handler c1 c2 => .handler (substMVarComp n new c1) (substMVarComp n new c2)
+| .pair v1 v2 => .pair (substMVarVal n new v1) (substMVarVal n new v2)
 | .bool => .bool
-end
-
-mutual
-/--
-  Check if `.mvar n` appears anywhere in the given value type.
--/
-def mvarInVal (n : Nat) : ValueTy' → Bool
-| .mvar n' => n == n'
-| .function input output => mvarInVal n input || mvarInComp n output
-| .handler c1 c2 => mvarInComp n c1 || mvarInComp n c2
-| .bool => false
-
-/--
-  Check if `.mvar n` appears anywhere in the given computation type.
--/
-def mvarInComp (n : Nat) : ComputationTy' → Bool
-| ⟨returnTy⟩ => mvarInVal n returnTy
+| .unit => .unit
+| .string => .string
+| .num => .num
+| .void => .void
 end
 
 /--
@@ -243,10 +317,10 @@ def List.applySubst (f : ValueTy' → ValueTy') (c : Constraints) : Constraints 
 /--
   Given a list of constraints, construct a substitution to solve them.
 -/
-def unify : Constraints → Option (ComputationTy' → ComputationTy')
-| [] => some id
+partial def unify : Constraints → Except String (ComputationTy' → ComputationTy')
+| [] => Except.ok id
 | .valEq τ τ' :: cs => do
-  if τ = τ' then
+  if τ = τ' ∨ τ = .void ∨ τ' = .void then
     return ←unify cs
   else if let .mvar n := τ then
     if ¬mvarInVal n τ' then
@@ -263,34 +337,28 @@ def unify : Constraints → Option (ComputationTy' → ComputationTy')
   else if let .function τ₀ τ₁ := τ then
     if let .function τ₀' τ₁' := τ' then
       return ← unify (.valEq τ₀ τ₀' :: .valEq (τ₁.returnTy) (τ₁'.returnTy) :: cs)
-  none
-partial_fixpoint
+  else if let .pair τ₀ τ₁ := τ then
+    if let .pair τ₀' τ₁' := τ' then
+      return ← unify (.valEq τ₀ τ₀' :: .valEq τ₁ τ₁' :: cs)
+  Except.error s!"Failed to solve constraint {repr (Constraint.valEq τ τ')}"
 
 /--
   Infer the type of the computation `c` given the operation signature `σ`.
 -/
-def inferCompType (σ : OpSignature) (c : Computation) : Except String ComputationTy' :=
-  match collectConstraints σ c with
-  | .ok (type, constraints) =>
-    if let some substitution := unify constraints then
-      Except.ok (substitution type)
-    else
-      Except.error s!"Failed to unify constraints {repr constraints}"
-  | .error e => .error e
+def inferCompType (σ : OpSignature) (c : Computation) : Except String ComputationTy' := do
+  let (type, constraints) ← collectConstraints σ c
+  let substitution ← unify constraints
+  return substitution type
 
 /--
   Infer the type of the value `v` given the operation signature `σ`.
 -/
-def inferValType (σ : OpSignature) (v : Value) : Except String ValueTy' := (do
-  let (type, constraints) ← collectCompConstraints σ {} (Computation.ret v)
-  if let some substitution := unify constraints then
-    return (substitution type).returnTy
-  else
-    Except.error s!"Failed to unify constraints {repr constraints}")
-  |>.run' {} |>.run
+def inferValType (σ : OpSignature) (v : Value) : Except String ValueTy' := do
+  let (type, constraints) ← collectConstraints σ (Computation.ret v)
+  let substitution ← unify constraints
+  return (substitution type).returnTy
 
 open Input
-#eval inferCompType (Std.TreeMap.ofList [("print", (ValueTy.bool, ValueTy.bool))]) {{{
-  with handler {ops := []} handle
-  (fun x ↦ return 1) True
+#eval inferValType (Std.TreeMap.ofList [("print", (ValueTy.bool, ValueTy.bool))]) {{{
+  (recfun f x ↦ f x)
 }}}

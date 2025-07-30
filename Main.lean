@@ -168,6 +168,13 @@ def chooseInt := {{{
       chooseInt pair(mPlusOne, n)
 }}}
 
+#eval inferValType (Std.TreeMap.ofList
+  [("decide", (ValueTy.unit, ValueTy.bool)),
+   ("fail", (ValueTy.unit, ValueTy.unit))])
+{{{
+  ~chooseInt
+}}}
+
 /--
   Returns a pair of type `Bool × Int`
   which is whether or not it is a square number,
@@ -206,7 +213,8 @@ def pythagorean := {{{
     if isSquare then
       return pair(a, pair(b, sqrt))
     else
-      fail⟨()⟩
+      do _u ← fail⟨()⟩ in
+      return pair(0, pair(0, 0))
 }}}
 
 def backtrack := {{{
@@ -229,6 +237,13 @@ info: return (5, (12, 13))
 -- Returns the unhandled `fail` operation
 #evalLang {{{
   with ~backtrack handle ~pythagorean pair(10,15)
+}}}
+
+#eval inferCompType (Std.TreeMap.ofList
+  [("decide", (ValueTy.unit, ValueTy.bool)),
+   ("fail", (ValueTy.unit, ValueTy.void))])
+{{{
+  with ~backtrack handle ~pythagorean pair(4,15)
 }}}
 
 def main : IO Unit :=
