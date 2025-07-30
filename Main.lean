@@ -24,6 +24,14 @@ info: do x0 ← print⟨"What is your forename?"; fun x0 ↦ return x0⟩ in
 #guard_msgs in
 #eval printFullName
 
+-- You can also infer the type. Squiggly brackets indicate a computation type.
+/--
+info: "{str}"
+-/
+#guard_msgs in
+#inferType ([("print", (.string, .unit)), ("read", (.unit, .string))]),
+  printFullName
+
 def alwaysRead := {{{
   fun s ↦ (return handler {ops := ["read"(x,k) ↦ k s, "print"(x,k) ↦ k ()]})
 }}}
@@ -168,13 +176,6 @@ def chooseInt := {{{
       chooseInt pair(mPlusOne, n)
 }}}
 
-#eval inferValType (Std.TreeMap.ofList
-  [("decide", (ValueTy.unit, ValueTy.bool)),
-   ("fail", (ValueTy.unit, ValueTy.unit))])
-{{{
-  ~chooseInt
-}}}
-
 /--
   Returns a pair of type `Bool × Int`
   which is whether or not it is a square number,
@@ -198,6 +199,12 @@ def isSquare := {{{
         isSquareAux pair(n, accPlusOne)) pair(n, 0)
 }}}
 
+/--
+info: "int → {(bool, int)}"
+-/
+#guard_msgs in
+#inferType [], isSquare
+
 def pythagorean := {{{
   fun mn ↦
     do m ← fst mn in
@@ -213,8 +220,7 @@ def pythagorean := {{{
     if isSquare then
       return pair(a, pair(b, sqrt))
     else
-      do _u ← fail⟨()⟩ in
-      return pair(0, pair(0, 0))
+      fail⟨()⟩
 }}}
 
 def backtrack := {{{
@@ -239,9 +245,13 @@ info: return (5, (12, 13))
   with ~backtrack handle ~pythagorean pair(10,15)
 }}}
 
-#eval inferCompType (Std.TreeMap.ofList
-  [("decide", (ValueTy.unit, ValueTy.bool)),
-   ("fail", (ValueTy.unit, ValueTy.void))])
+/--
+info: "{(int, (int, int))}"
+-/
+#guard_msgs in
+#inferType
+  [("decide", (.unit, .bool)),
+   ("fail", (.unit, .void))],
 {{{
   with ~backtrack handle ~pythagorean pair(4,15)
 }}}

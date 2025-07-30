@@ -2,6 +2,11 @@ import IntroEffects.Type
 import IntroEffects.Syntax
 import Batteries.Data.List
 
+/-!
+  Defines the function `inferType`
+  for inferring the types of computations and values.
+-/
+
 mutual
 
 /--
@@ -345,20 +350,77 @@ partial def unify : Constraints → Except String (ComputationTy' → Computatio
 /--
   Infer the type of the computation `c` given the operation signature `σ`.
 -/
-def inferCompType (σ : OpSignature) (c : Computation) : Except String ComputationTy' := do
-  let (type, constraints) ← collectConstraints σ c
+def inferCompType (σ : List (String × (ValueTy × ValueTy))) (c : Computation) :
+    Except String ComputationTy' := do
+  let (type, constraints) ← collectConstraints (Std.TreeMap.ofList σ) c
   let substitution ← unify constraints
   return substitution type
 
 /--
   Infer the type of the value `v` given the operation signature `σ`.
 -/
-def inferValType (σ : OpSignature) (v : Value) : Except String ValueTy' := do
-  let (type, constraints) ← collectConstraints σ (Computation.ret v)
+def inferValType (σ : List (String × (ValueTy × ValueTy))) (v : Value) :
+    Except String ValueTy' := do
+  let (type, constraints) ← collectConstraints (Std.TreeMap.ofList σ) (Computation.ret v)
   let substitution ← unify constraints
   return (substitution type).returnTy
 
-open Input
-#eval inferValType (Std.TreeMap.ofList [("print", (ValueTy.bool, ValueTy.bool))]) {{{
-  (recfun f x ↦ f x)
-}}}
+/--
+  The type of either a value or computation with metavariables.
+-/
+inductive Ty' where
+| val : ValueTy' → Ty'
+| comp : ComputationTy' → Ty'
+/--
+    Infer the type of the expression `e` given the operation signature `σ`.
+-/
+def inferType (σ : List (String × (ValueTy × ValueTy))) : Expr → Except String Ty'
+| .val v => (.val ·) <$> inferValType σ v
+| .comp c => (.comp ·) <$> inferCompType σ c
+
+section Output
+open Std (Format)
+open Lean.Parser (maxPrec minPrec argPrec)
+
+/-
+  Improve the formatting of the output
+-/
+mutual
+def ValueTy'.format (prec : Nat) : ValueTy' → Format
+| .mvar n => .group <| s!"?α{n}"
+| .bool => .group <| "bool"
+| .handler c1 c2 => .group <| c1.format prec ++ " ⇒ " ++ c2.format prec
+| .function v c => .group <| v.format prec ++ " → " ++ c.format prec
+| .pair v1 v2 => .group <| "(" ++ v1.format prec ++ ", " ++ v2.format prec ++ ")"
+| .void => .group <| "void"
+| .unit => .group <| "unit"
+| .num => .group <| "int"
+| .string => .group <| "str"
+
+def ComputationTy'.format (prec : Nat) : ComputationTy' → Format
+| ⟨returnTy⟩ => .group <| "{" ++ returnTy.format prec ++ "}"
+end
+
+instance : Repr ComputationTy' where
+  reprPrec comp n := comp.format n
+instance : Repr ValueTy' where
+  reprPrec value n := value.format n
+instance : Repr Ty' where
+  reprPrec e := match e with
+    | .val v => reprPrec v
+    | .comp c => reprPrec c
+
+instance : ToString ComputationTy' where
+  toString := toString ∘ repr
+instance : ToString ValueTy' where
+  toString := toString ∘ repr
+instance : ToString Ty' where
+  toString := toString ∘ repr
+
+def Except.exceptFormat : Except String Ty' → String
+| .ok t => toString t
+| .error s => s
+end Output
+
+macro "#inferType " σ:term ", " e:term : command =>
+  `(#eval (inferType $σ $e).exceptFormat)
