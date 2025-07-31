@@ -1,5 +1,6 @@
 import Std
 import IntroEffects.Expr
+import Lean
 
 mutual
 
@@ -144,3 +145,36 @@ inductive HasType (σ : OpSignature) : Ctx → Expr → Ty → Prop where
 | handle (v : Value) (c : Computation) :
   HasType σ Γ v (ValueTy.handler C D) → HasType σ Γ c C →
   HasType σ Γ (Computation.handle v c) D
+
+/-
+  Improve the input syntax for types.
+-/
+namespace Input
+open Lean Elab Term Meta
+
+declare_syntax_cat type
+
+scoped syntax "{" type "}" : type
+scoped syntax "(" type ", " type ")" : type
+scoped syntax type " → " type : type
+scoped syntax type " ⇒ " type : type
+scoped syntax "bool" : type
+scoped syntax "int" : type
+scoped syntax "str" : type
+scoped syntax "unit" : type
+scoped syntax "void" : type
+scoped syntax:max "~" term:max : type
+scoped syntax (name := typeTerm) "[type| " type " ]" : term
+
+scoped macro_rules
+| `([type| {$e1} ]) => `(ComputationTy.mk [type| $e1 ] [])
+| `([type| ($e1, $e2) ]) => `(ValueTy.pair [type| $e1 ] [type| $e2 ])
+| `([type| $e1 → $e2 ]) => `(ValueTy.function [type| $e1 ] [type| $e2 ])
+| `([type| $e1 ⇒ $e2 ]) => `(ValueTy.handler [type| $e1 ] [type| $e2 ])
+| `([type| bool ]) => `(ValueTy.bool)
+| `([type| int ]) => `(ValueTy.num)
+| `([type| str ]) => `(ValueTy.str)
+| `([type| unit ]) => `(ValueTy.unit)
+| `([type| void ]) => `(ValueTy.void)
+| `([type| ~$e1 ]) => pure e1
+end Input
