@@ -67,7 +67,7 @@ abbrev Ctx' := List ValueTy'
   An operation signature matches the name of the operation
   to its input type and output type.
 -/
-abbrev OpSignature' := Std.TreeMap String (ValueTy × ValueTy)
+abbrev OpSignatureList := List (String × (ValueTy × ValueTy))
 abbrev Constraints := List Constraint
 
 mutual
@@ -119,7 +119,7 @@ def freshCompMVar : MetaM ComputationTy' := do
   constraints on those metavariables.
 -/
 mutual
-def collectValConstraints (σ : OpSignature') (Γ : Ctx') :
+def collectValConstraints (σ : OpSignature) (Γ : Ctx') :
     Value → MetaM (ValueTy' × Constraints)
 | .var (.bvar i) =>
   match Γ[i]? with
@@ -148,7 +148,7 @@ def collectValConstraints (σ : OpSignature') (Γ : Ctx') :
 | .unit => pure (.unit, [])
 | .var (.fvar n) => Except.error s!"Free variable {n}"
 
-def collectCompConstraints (σ : OpSignature') (Γ : Ctx') :
+def collectCompConstraints (σ : OpSignature) (Γ : Ctx') :
     Computation → MetaM (ComputationTy' × Constraints)
 | .ret v => do
   let (τ, C) ← collectValConstraints σ Γ v
@@ -241,7 +241,7 @@ def collectCompConstraints (σ : OpSignature') (Γ : Ctx') :
   let (_, C2) ← collectValConstraints σ Γ v2
   return ({returnTy := .bool}, C1 ++ C2)
 
-def collectOpClauseConstraints (σ : OpSignature') (Γ : Ctx') :
+def collectOpClauseConstraints (σ : OpSignature) (Γ : Ctx') :
     OpClause → MetaM (ComputationTy' × Constraints)
 | ⟨op, body⟩ => do
   let some (Aop, Bop) := (σ.get? op) | Except.error s!"Unknown op {op}"
@@ -264,7 +264,7 @@ def collectOpClauseConstraints (σ : OpSignature') (Γ : Ctx') :
   let newConstraints : Constraints := [.valEq α (.function Bop τ_body)]
   return (τ_body, newConstraints ++ C_body)
 
-def collectHandlerConstraints (σ : OpSignature') (Γ : Ctx') :
+def collectHandlerConstraints (σ : OpSignature) (Γ : Ctx') :
     Handler → MetaM (ValueTy' × Constraints)
 | ⟨ret, ops⟩ => do
   -- `ret` has one dangling bvar
@@ -279,7 +279,7 @@ end
   Collect the final type with metavariables
   and all the constraints on those metavariables.
 -/
-def collectConstraints (σ : OpSignature') (e : Computation) :
+def collectConstraints (σ : OpSignature) (e : Computation) :
     Except String (ComputationTy' × Constraints) :=
   collectCompConstraints σ [] e |>.run' {} |>.run
 
@@ -350,7 +350,7 @@ partial def unify : Constraints → Except String (ComputationTy' → Computatio
 /--
   Infer the type of the computation `c` given the operation signature `σ`.
 -/
-def inferCompType (σ : List (String × (ValueTy × ValueTy))) (c : Computation) :
+def inferCompType (σ : OpSignatureList) (c : Computation) :
     Except String ComputationTy' := do
   let (type, constraints) ← collectConstraints (Std.TreeMap.ofList σ) c
   let substitution ← unify constraints
@@ -359,7 +359,7 @@ def inferCompType (σ : List (String × (ValueTy × ValueTy))) (c : Computation)
 /--
   Infer the type of the value `v` given the operation signature `σ`.
 -/
-def inferValType (σ : List (String × (ValueTy × ValueTy))) (v : Value) :
+def inferValType (σ : OpSignatureList) (v : Value) :
     Except String ValueTy' := do
   let (type, constraints) ← collectConstraints (Std.TreeMap.ofList σ) (Computation.ret v)
   let substitution ← unify constraints

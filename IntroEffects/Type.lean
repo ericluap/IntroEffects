@@ -17,8 +17,9 @@ deriving DecidableEq, Repr
   The type of a computation is the type of the value it returns
   as well as the operations it can possibly call.
 -/
-inductive ComputationTy where
-| mk (returnTy : ValueTy) (Δ : List String)
+structure ComputationTy where
+  returnTy : ValueTy
+  Δ : List String
 deriving DecidableEq, Repr
 end
 
