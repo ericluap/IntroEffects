@@ -149,22 +149,22 @@ inductive HasType (σ : OpSignature) : Ctx → Expr → Ty → Prop where
 /-
   Improve the input syntax for types.
 -/
-namespace Input
+namespace InputType
 open Lean Elab Term Meta
 
-declare_syntax_cat type
+declare_syntax_cat type'
 
-scoped syntax "{" type "}" : type
-scoped syntax "(" type ", " type ")" : type
-scoped syntax type " → " type : type
-scoped syntax type " ⇒ " type : type
-scoped syntax "bool" : type
-scoped syntax "int" : type
-scoped syntax "str" : type
-scoped syntax "unit" : type
-scoped syntax "void" : type
-scoped syntax:max "~" term:max : type
-scoped syntax (name := typeTerm) "[type| " type " ]" : term
+scoped syntax "{" type' "}" : type'
+scoped syntax "(" type' ", " type' ")" : type'
+scoped syntax type' " → " type' : type'
+scoped syntax type' " ⇒ " type' : type'
+scoped syntax "bool" : type'
+scoped syntax "int" : type'
+scoped syntax "str" : type'
+scoped syntax "unit" : type'
+scoped syntax "void" : type'
+scoped syntax:max "~" term:max : type'
+scoped syntax "[type| " type' " ]" : term
 
 scoped macro_rules
 | `([type| {$e1} ]) => `(ComputationTy.mk [type| $e1 ] [])
@@ -173,8 +173,26 @@ scoped macro_rules
 | `([type| $e1 ⇒ $e2 ]) => `(ValueTy.handler [type| $e1 ] [type| $e2 ])
 | `([type| bool ]) => `(ValueTy.bool)
 | `([type| int ]) => `(ValueTy.num)
-| `([type| str ]) => `(ValueTy.str)
+| `([type| str ]) => `(ValueTy.string)
 | `([type| unit ]) => `(ValueTy.unit)
 | `([type| void ]) => `(ValueTy.void)
 | `([type| ~$e1 ]) => pure e1
-end Input
+end InputType
+
+namespace InputSigma
+declare_syntax_cat sigma
+
+scoped syntax "(" str ", " type' " ⟶ " type' ")" : sigma
+scoped syntax "[σ| " sigma,* "]" : term
+
+macro "[σ| " elems:sigma,* "]" : term => do
+  let elems := elems.getElems
+  let transformed ← elems.mapM fun stx =>
+    match stx with
+    | `(sigma| ( $s, $e1 ⟶ $e2 )) =>
+      open InputType in `(($s, ([type| $e1], [type| $e2])))
+    | _ => Lean.Macro.throwError s!"Unsupported syntax {stx}"
+  `([$transformed,*])
+
+
+end InputSigma

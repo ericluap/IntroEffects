@@ -19,14 +19,14 @@ inductive ValueTy' where
 | function : ValueTy' → ComputationTy' → ValueTy'
 | handler : ComputationTy' → ComputationTy' → ValueTy'
 | mvar : Nat → ValueTy'
-deriving Repr, DecidableEq, Inhabited
+deriving DecidableEq, Inhabited
 
 /--
   The type of a computation is the type of the value it returns.
 -/
 structure ComputationTy' where
   returnTy : ValueTy'
-deriving Repr, DecidableEq
+deriving DecidableEq
 end
 
 mutual
@@ -57,7 +57,64 @@ end
 -/
 inductive Constraint where
 | valEq (τ τ' : ValueTy') -- `τ ≡ τ'`
-deriving Repr, Inhabited
+deriving Inhabited
+
+/--
+  The type of either a value or computation with metavariables.
+-/
+inductive Ty' where
+| val : ValueTy' → Ty'
+| comp : ComputationTy' → Ty'
+/-
+  Improve the formatting of the output
+-/
+section Output
+open Std (Format)
+open Lean.Parser (maxPrec minPrec argPrec)
+
+mutual
+def ValueTy'.format (prec : Nat) : ValueTy' → Format
+| .mvar n => .group <| s!"?α{n}"
+| .bool => .group <| "bool"
+| .handler c1 c2 => .group <| c1.format prec ++ " ⇒ " ++ c2.format prec
+| .function v c => .group <| v.format prec ++ " → " ++ c.format prec
+| .pair v1 v2 => .group <| "(" ++ v1.format prec ++ ", " ++ v2.format prec ++ ")"
+| .void => .group <| "void"
+| .unit => .group <| "unit"
+| .num => .group <| "int"
+| .string => .group <| "str"
+
+def ComputationTy'.format (prec : Nat) : ComputationTy' → Format
+| ⟨returnTy⟩ => .group <| "{" ++ returnTy.format prec ++ "}"
+end
+
+def Constraint.format (prec : Nat) : Constraint → Format
+| .valEq v1 v2 => .group <| v1.format prec ++ " ≡ " ++ v2.format prec
+
+instance : Repr ComputationTy' where
+  reprPrec comp n := comp.format n
+instance : Repr ValueTy' where
+  reprPrec value n := value.format n
+instance : Repr Ty' where
+  reprPrec e := match e with
+    | .val v => reprPrec v
+    | .comp c => reprPrec c
+instance : Repr Constraint where
+  reprPrec c n := c.format n
+
+instance : ToString ComputationTy' where
+  toString := toString ∘ repr
+instance : ToString ValueTy' where
+  toString := toString ∘ repr
+instance : ToString Ty' where
+  toString := toString ∘ repr
+instance : ToString Constraint where
+  toString := toString ∘ repr
+
+def Except.exceptFormat : Except String Ty' → String
+| .ok t => toString t
+| .error s => s
+end Output
 
 /--
   A bound variable has the type of the type it refers to in the context.
@@ -366,61 +423,11 @@ def inferValType (σ : OpSignatureList) (v : Value) :
   return (substitution type).returnTy
 
 /--
-  The type of either a value or computation with metavariables.
--/
-inductive Ty' where
-| val : ValueTy' → Ty'
-| comp : ComputationTy' → Ty'
-/--
     Infer the type of the expression `e` given the operation signature `σ`.
 -/
 def inferType (σ : List (String × (ValueTy × ValueTy))) : Expr → Except String Ty'
 | .val v => (.val ·) <$> inferValType σ v
 | .comp c => (.comp ·) <$> inferCompType σ c
-
-section Output
-open Std (Format)
-open Lean.Parser (maxPrec minPrec argPrec)
-
-/-
-  Improve the formatting of the output
--/
-mutual
-def ValueTy'.format (prec : Nat) : ValueTy' → Format
-| .mvar n => .group <| s!"?α{n}"
-| .bool => .group <| "bool"
-| .handler c1 c2 => .group <| c1.format prec ++ " ⇒ " ++ c2.format prec
-| .function v c => .group <| v.format prec ++ " → " ++ c.format prec
-| .pair v1 v2 => .group <| "(" ++ v1.format prec ++ ", " ++ v2.format prec ++ ")"
-| .void => .group <| "void"
-| .unit => .group <| "unit"
-| .num => .group <| "int"
-| .string => .group <| "str"
-
-def ComputationTy'.format (prec : Nat) : ComputationTy' → Format
-| ⟨returnTy⟩ => .group <| "{" ++ returnTy.format prec ++ "}"
-end
-
-instance : Repr ComputationTy' where
-  reprPrec comp n := comp.format n
-instance : Repr ValueTy' where
-  reprPrec value n := value.format n
-instance : Repr Ty' where
-  reprPrec e := match e with
-    | .val v => reprPrec v
-    | .comp c => reprPrec c
-
-instance : ToString ComputationTy' where
-  toString := toString ∘ repr
-instance : ToString ValueTy' where
-  toString := toString ∘ repr
-instance : ToString Ty' where
-  toString := toString ∘ repr
-
-def Except.exceptFormat : Except String Ty' → String
-| .ok t => toString t
-| .error s => s
-end Output
 
 macro "#inferType " σ:term ", " e:term : command =>
   `(#eval (inferType $σ $e).exceptFormat)

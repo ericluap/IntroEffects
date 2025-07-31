@@ -3,7 +3,7 @@ import IntroEffects
 /-!
   Examples of the language and its output after being evaluated.
 -/
-open Input
+open Input InputType InputSigma
 
 def printFullName := {{{
   ← print⟨str "What is your forename?"⟩;
@@ -29,8 +29,16 @@ info: do x0 ← print⟨"What is your forename?"; fun x0 ↦ return x0⟩ in
 info: "{str}"
 -/
 #guard_msgs in
-#inferType ([("print", (.string, .unit)), ("read", (.unit, .string))]),
+#inferType [σ| ("print", str ⟶ unit), ("read", unit ⟶ str)],
   printFullName
+
+-- You can check that the type is what you expect it to be.
+/--
+info: true
+-/
+#guard_msgs in
+#eval checkType [σ| ("print", str ⟶ unit), ("read", unit ⟶ str)]
+  [type| {str} ] printFullName
 
 def alwaysRead := {{{
   fun s ↦ (return handler {ops := ["read"(x,k) ↦ k s, "print"(x,k) ↦ k ()]})
@@ -250,8 +258,7 @@ info: "{(int, (int, int))}"
 -/
 #guard_msgs in
 #inferType
-  [("decide", (.unit, .bool)),
-   ("fail", (.unit, .void))],
+  [σ| ("decide", unit ⟶ bool), ("fail", unit ⟶ void)],
 {{{
   with ~backtrack handle ~pythagorean pair(4,15)
 }}}

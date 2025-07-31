@@ -25,7 +25,7 @@ def checkType (op : OpSignatureList) : Ty → Expr →  Bool
 | .comp ct, .comp c => checkCompType op ct c
 | _, _ => false
 
-open Input
+open Input InputType
 #eval checkType [] [type| int → {int} ] {{{
   fun x ↦ x + 1
 }}}
